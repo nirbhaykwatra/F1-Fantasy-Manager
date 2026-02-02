@@ -1,6 +1,6 @@
 # F1-Fantasy-Manager
 
-## A Discord app for creating and managing F1 Fantasy leagues.
+## A full stack application and Discord bot for running the LVS Formula 1 Fantasy League.
 
 ## Features  
 ## Multiple Ways to Play  
