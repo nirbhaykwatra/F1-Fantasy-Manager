@@ -170,25 +170,7 @@ CREATE TABLE drafts (
        AND driver1_id != wildcard_id
        AND driver2_id != driver3_id
        AND driver2_id != wildcard_id
-       AND driver3_id != wildcard_id),
-    CHECK (
-        EXISTS (
-            SELECT 1 FROM drivers d
-            WHERE d.id = driver1_id AND d.constructor_id = constructor_id
-        ) OR
-        EXISTS (
-            SELECT 1 FROM drivers d
-            WHERE d.id = driver2_id AND d.constructor_id = constructor_id
-        ) OR
-        EXISTS (
-            SELECT 1 FROM drivers d
-            WHERE d.id = driver3_id AND d.constructor_id = constructor_id
-        ) OR
-        EXISTS (
-            SELECT 1 FROM drivers d
-            WHERE d.id = wildcard_id AND d.constructor_id = constructor_id
-        )
-    )
+       AND driver3_id != wildcard_id)
 );
 
 CREATE INDEX idx_drafts_player_league ON drafts (player_id, league_id);
@@ -449,3 +431,60 @@ GROUP BY p.id, p.username, p.discord_user_id, pl.league_id, l.name, l.season_id,
 ORDER BY p.id, pl.joined_at DESC;
 
 COMMENT ON VIEW v_player_leagues IS 'Shows all leagues each player participates in';
+
+-- ============================================================
+-- TRIGGER FUNCTIONS
+-- ============================================================
+
+-- Function to validate that at least one driver belongs to the selected constructor
+CREATE OR REPLACE FUNCTION validate_draft_constructor_driver()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Check if at least one of the selected drivers belongs to the constructor
+    IF NOT EXISTS (
+        SELECT 1 FROM drivers d
+        WHERE d.id = NEW.driver1_id AND d.constructor_id = NEW.constructor_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM drivers d
+        WHERE d.id = NEW.driver2_id AND d.constructor_id = NEW.constructor_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM drivers d
+        WHERE d.id = NEW.driver3_id AND d.constructor_id = NEW.constructor_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM drivers d
+        WHERE d.id = NEW.wildcard_id AND d.constructor_id = NEW.constructor_id
+    ) THEN
+        RAISE EXCEPTION 'At least one driver must belong to the selected constructor (constructor_id: %)', NEW.constructor_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION validate_draft_constructor_driver IS 'Ensures at least one selected driver belongs to the chosen constructor';
+
+-- ============================================================
+-- TRIGGERS
+-- ============================================================
+
+-- Trigger for INSERT operations on drafts
+CREATE TRIGGER trg_drafts_validate_constructor_insert
+    BEFORE INSERT ON drafts
+    FOR EACH ROW
+    EXECUTE FUNCTION validate_draft_constructor_driver();
+
+-- Trigger for UPDATE operations on drafts
+CREATE TRIGGER trg_drafts_validate_constructor_update
+    BEFORE UPDATE ON drafts
+    FOR EACH ROW
+    WHEN (
+        OLD.driver1_id IS DISTINCT FROM NEW.driver1_id OR
+        OLD.driver2_id IS DISTINCT FROM NEW.driver2_id OR
+        OLD.driver3_id IS DISTINCT FROM NEW.driver3_id OR
+        OLD.wildcard_id IS DISTINCT FROM NEW.wildcard_id OR
+        OLD.constructor_id IS DISTINCT FROM NEW.constructor_id
+    )
+    EXECUTE FUNCTION validate_draft_constructor_driver();
+
+COMMENT ON TRIGGER trg_drafts_validate_constructor_insert ON drafts IS 'Validates constructor-driver relationship on insert';
+COMMENT ON TRIGGER trg_drafts_validate_constructor_update ON drafts IS 'Validates constructor-driver relationship on update (only when relevant fields change)';
