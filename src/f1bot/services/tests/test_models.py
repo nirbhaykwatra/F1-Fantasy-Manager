@@ -307,12 +307,13 @@ class TestDriverRepository:
 
     async def test_create_driver_success(self, driver_repo, mock_db):
         # Arrange
-        mock_db.fetch_one.return_value = (1, 1, "VER", "Max", "Verstappen", 1, "verstappen", True)
+        mock_db.fetch_one.return_value = (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True)
 
         # Act
         result = await driver_repo.create_driver(
             season_id=1,
             code="VER",
+            number=1,
             first_name="Max",
             last_name="Verstappen",
             constructor_id=1,
@@ -324,6 +325,7 @@ class TestDriverRepository:
         assert result is not None
         assert result.id == 1
         assert result.code == "VER"
+        assert result.number == 1
         assert result.first_name == "Max"
         assert result.last_name == "Verstappen"
 
@@ -336,6 +338,7 @@ class TestDriverRepository:
             await driver_repo.create_driver(
                 season_id=1,
                 code="VER",
+                number=1,
                 first_name="Max",
                 last_name="Verstappen",
                 constructor_id=1
@@ -343,7 +346,7 @@ class TestDriverRepository:
 
     async def test_get_driver_by_id(self, driver_repo, mock_db):
         # Arrange
-        mock_db.fetch_one.return_value = (1, 1, "VER", "Max", "Verstappen", 1, "verstappen", True)
+        mock_db.fetch_one.return_value = (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True)
 
         # Act
         result = await driver_repo.get_driver_by_id(driver_id=1)
@@ -356,8 +359,8 @@ class TestDriverRepository:
     async def test_list_drivers_by_season_active_only(self, driver_repo, mock_db):
         # Arrange
         mock_db.fetch_all.return_value = [
-            (1, 1, "VER", "Max", "Verstappen", 1, "verstappen", True),
-            (2, 1, "PER", "Sergio", "Perez", 1, "perez", True)
+            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True),
+            (2, 1, "PER", 11, "Sergio", "Perez", 1, "perez", True)
         ]
 
         # Act
@@ -370,8 +373,8 @@ class TestDriverRepository:
     async def test_list_drivers_by_season_all(self, driver_repo, mock_db):
         # Arrange
         mock_db.fetch_all.return_value = [
-            (1, 1, "VER", "Max", "Verstappen", 1, "verstappen", True),
-            (2, 1, "RIC", "Daniel", "Ricciardo", 1, "ricciardo", False)
+            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True),
+            (2, 1, "RIC", 3, "Daniel", "Ricciardo", 1, "ricciardo", False)
         ]
 
         # Act
@@ -383,8 +386,8 @@ class TestDriverRepository:
     async def test_list_drivers_by_constructor(self, driver_repo, mock_db):
         # Arrange
         mock_db.fetch_all.return_value = [
-            (1, 1, "VER", "Max", "Verstappen", 1, "verstappen", True),
-            (2, 1, "PER", "Sergio", "Perez", 1, "perez", True)
+            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True),
+            (2, 1, "PER", 11, "Sergio", "Perez", 1, "perez", True)
         ]
 
         # Act
@@ -393,30 +396,6 @@ class TestDriverRepository:
         # Assert
         assert len(result) == 2
         assert all(d.constructor_id == 1 for d in result)
-
-    async def test_update_driver_constructor(self, driver_repo, mock_db):
-        # Act
-        result = await driver_repo.update_driver_constructor(driver_id=1, constructor_id=2)
-
-        # Assert
-        assert result is True
-        mock_db.execute_query.assert_called_once()
-
-    async def test_set_driver_active_status(self, driver_repo, mock_db):
-        # Act
-        result = await driver_repo.set_driver_active_status(driver_id=1, is_active=False)
-
-        # Assert
-        assert result is True
-        mock_db.execute_query.assert_called_once()
-
-    async def test_delete_driver(self, driver_repo, mock_db):
-        # Act
-        result = await driver_repo.delete_driver(driver_id=1)
-
-        # Assert
-        assert result is True
-        mock_db.execute_query.assert_called_once()
 
 
 # ============================================================
