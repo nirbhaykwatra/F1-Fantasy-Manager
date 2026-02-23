@@ -33,6 +33,7 @@ async def main() -> None:
         bot.db = DatabaseManager()
         await bot.db.initialize(config.database_url, min_size=2, max_size=10)
         bot.choiceService = ChoiceService(db=bot.db)
+        print(f"Services initialized.")
 
         # region Load extensions
         for command in config.cmds_dir.glob("*.py"):
