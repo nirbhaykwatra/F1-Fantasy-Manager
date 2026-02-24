@@ -118,8 +118,6 @@ CREATE TABLE players (
     discord_user_id BIGINT UNIQUE,                          -- NULL if non-Discord
     username        TEXT NOT NULL UNIQUE,
     password        VARCHAR(255),                           -- bcrypt hash, NULL if Discord-only
-    team_name       TEXT,
-    team_motto      TEXT,
     timezone        TEXT NOT NULL DEFAULT 'UTC',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -138,6 +136,8 @@ COMMENT ON COLUMN players.password IS 'NULL for Discord-only users';
 CREATE TABLE player_leagues (
     player_id       INT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     league_id       INT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+    team_name       TEXT,
+    team_motto      TEXT,
     joined_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (player_id, league_id)
 );
@@ -279,7 +279,7 @@ SELECT
     l.season_id,
     p.id AS player_id,
     p.username,
-    p.team_name,
+    pl.team_name,  -- Changed from p.team_name
     COALESCE(SUM(prs.total_points), 0) AS total_points,
     COUNT(DISTINCT prs.grand_prix_id) AS rounds_played,
     RANK() OVER (PARTITION BY pl.league_id ORDER BY COALESCE(SUM(prs.total_points), 0) DESC) AS rank
@@ -288,7 +288,7 @@ JOIN players p ON p.id = pl.player_id
 JOIN leagues l ON l.id = pl.league_id
 LEFT JOIN player_round_scores prs ON prs.player_id = p.id AND prs.league_id = pl.league_id
 LEFT JOIN grands_prix gp ON gp.id = prs.grand_prix_id AND gp.season_id = l.season_id
-GROUP BY pl.league_id, l.name, l.season_id, p.id, p.username, p.team_name
+GROUP BY pl.league_id, l.name, l.season_id, p.id, p.username, pl.team_name
 ORDER BY pl.league_id, total_points DESC;
 
 COMMENT ON VIEW v_league_leaderboard IS 'Season standings per league with rankings';
@@ -303,12 +303,13 @@ SELECT
     gp.round_number,
     p.id AS player_id,
     p.username,
-    p.team_name,
+    pl.team_name,  -- Changed from p.team_name
     prs.total_points,
     prs.breakdown_json,
     RANK() OVER (PARTITION BY prs.league_id, gp.id ORDER BY prs.total_points DESC) AS rank
 FROM player_round_scores prs
 JOIN players p ON p.id = prs.player_id
+JOIN player_leagues pl ON pl.player_id = p.id AND pl.league_id = prs.league_id
 JOIN leagues l ON l.id = prs.league_id
 JOIN grands_prix gp ON gp.id = prs.grand_prix_id
 ORDER BY prs.league_id, gp.round_number, prs.total_points DESC;
@@ -323,7 +324,7 @@ SELECT
     l.season_id,
     p.id AS player_id,
     p.username,
-    p.team_name,
+    pl.team_name,  -- Changed from p.team_name
     gp.round_number,
     gp.event_name,
     gp.is_completed,
@@ -365,7 +366,7 @@ CREATE OR REPLACE VIEW v_player_league_stats AS
 SELECT
     p.id AS player_id,
     p.username,
-    p.team_name,
+    pl.team_name,  -- Changed from p.team_name
     pl.league_id,
     l.name AS league_name,
     l.season_id,
@@ -381,7 +382,7 @@ JOIN player_leagues pl ON pl.player_id = p.id
 JOIN leagues l ON l.id = pl.league_id
 LEFT JOIN grands_prix gp ON gp.season_id = l.season_id
 LEFT JOIN player_round_scores prs ON prs.player_id = p.id AND prs.league_id = pl.league_id AND prs.grand_prix_id = gp.id
-GROUP BY p.id, p.username, p.team_name, pl.league_id, l.name, l.season_id;
+GROUP BY p.id, p.username, pl.team_name, pl.league_id, l.name, l.season_id;
 
 COMMENT ON VIEW v_player_league_stats IS 'Statistical summary per player per league';
 

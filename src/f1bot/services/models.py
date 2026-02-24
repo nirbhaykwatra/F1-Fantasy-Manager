@@ -79,8 +79,6 @@ class Player:
     discord_user_id: Optional[int]
     username: str
     password: Optional[str]
-    team_name: Optional[str]
-    team_motto: Optional[str]
     timezone: str
     created_at: datetime
 
@@ -90,6 +88,8 @@ class PlayerLeague:
     """Represents a player's membership in a league"""
     player_id: int
     league_id: int
+    team_name: Optional[str]
+    team_motto: Optional[str]
     joined_at: datetime
 
 
@@ -686,19 +686,16 @@ class PlayerRepository:
             username: str,
             discord_user_id: Optional[int] = None,
             password: Optional[str] = None,
-            team_name: Optional[str] = None,
-            team_motto: Optional[str] = None,
             timezone: str = "UTC"
     ) -> Optional[Player]:
         """CREATE: Register a new player (without league association)"""
         query = """
-                INSERT INTO players (discord_user_id, username, password, team_name, team_motto, timezone)
-                VALUES (%s, %s, %s, %s, %s, %s) 
-                RETURNING id, discord_user_id, username, password, team_name, team_motto, timezone, created_at
+                INSERT INTO players (discord_user_id, username, password, timezone)
+                VALUES (%s, %s, %s, \
+                        %s) RETURNING id, discord_user_id, username, password, timezone, created_at
                 """
         try:
-            row = await self.db.fetch_one(query, (discord_user_id, username, password, team_name, team_motto,
-                                                  timezone))
+            row = await self.db.fetch_one(query, (discord_user_id, username, password, timezone))
             return Player(*row) if row else None
         except Exception as e:
             raise ValueError(f"Player creation failed: {e}")
@@ -706,7 +703,12 @@ class PlayerRepository:
     async def get_player_by_id(self, player_id: int) -> Optional[Player]:
         """READ: Get player by ID"""
         query = """
-                SELECT id, discord_user_id, username, password, team_name, team_motto, timezone, created_at
+                SELECT id, \
+                       discord_user_id, \
+                       username, \
+                       password, \
+                       timezone, \
+                       created_at
                 FROM players
                 WHERE id = %s
                 """
@@ -716,7 +718,12 @@ class PlayerRepository:
     async def get_player_by_discord_id(self, discord_user_id: int) -> Optional[Player]:
         """READ: Get player by Discord user ID"""
         query = """
-                SELECT id, discord_user_id, username, password, team_name, team_motto, timezone, created_at
+                SELECT id, \
+                       discord_user_id, \
+                       username, \
+                       password, \
+                       timezone, \
+                       created_at
                 FROM players
                 WHERE discord_user_id = %s
                 """
@@ -726,7 +733,12 @@ class PlayerRepository:
     async def get_player_by_username(self, username: str) -> Optional[Player]:
         """READ: Get player by username"""
         query = """
-                SELECT id, discord_user_id, username, password, team_name, team_motto, timezone, created_at
+                SELECT id, \
+                       discord_user_id, \
+                       username, \
+                       password, \
+                       timezone, \
+                       created_at
                 FROM players
                 WHERE username = %s
                 """
@@ -736,7 +748,7 @@ class PlayerRepository:
     async def list_players_in_league(self, league_id: int) -> List[Player]:
         """READ: Get all players in a league"""
         query = """
-                SELECT p.id, p.discord_user_id, p.username, p.password, p.team_name, p.team_motto, p.timezone, p.created_at
+                SELECT p.id, p.discord_user_id, p.username, p.password, p.timezone, p.created_at
                 FROM players p
                 JOIN player_leagues pl ON pl.player_id = p.id
                 WHERE pl.league_id = %s
@@ -770,16 +782,21 @@ class PlayerRepository:
         rows = await self.db.fetch_all(query, (discord_user_id,))
         return [League(*row) for row in rows]
 
-    async def add_player_to_league(self, player_id: int, league_id: int) -> Optional[PlayerLeague]:
-        """CREATE: Add a player to a league"""
+    async def add_player_to_league(
+            self,
+            player_id: int,
+            league_id: int,
+            team_name: Optional[str],
+            team_motto: Optional[str]
+    ) -> Optional[PlayerLeague]:
+        """CREATE: Add a player to a league with league-specific team info"""
         query = """
-                INSERT INTO player_leagues (player_id, league_id)
-                VALUES (%s, %s)
-                ON CONFLICT (player_id, league_id) DO NOTHING
-                RETURNING player_id, league_id, joined_at
+                INSERT INTO player_leagues (player_id, league_id, team_name, team_motto)
+                VALUES (%s, %s, %s, %s) ON CONFLICT (player_id, league_id) DO NOTHING
+                RETURNING player_id, league_id, team_name, team_motto, joined_at
                 """
         try:
-            row = await self.db.fetch_one(query, (player_id, league_id))
+            row = await self.db.fetch_one(query, (player_id, league_id, team_name, team_motto))
             return PlayerLeague(*row) if row else None
         except Exception as e:
             raise ValueError(f"Failed to add player to league: {e}")
@@ -833,28 +850,41 @@ class PlayerRepository:
         row = await self.db.fetch_one(query, (player_id,))
         return row[0] if row else 0
 
-    async def update_team_name(self, player_id: int, team_name: str) -> bool:
-        """UPDATE: Change player's team name"""
+    async def update_team_name(self, player_id: int, league_id: int, team_name: str) -> bool:
+        """UPDATE: Change player's team name for a specific league"""
         query = """
-                UPDATE players
+                UPDATE player_leagues
                 SET team_name = %s
-                WHERE id = %s
+                WHERE player_id = %s \
+                  AND league_id = %s
                 """
         try:
-            await self.db.execute_query(query, (team_name, player_id))
+            await self.db.execute_query(query, (team_name, player_id, league_id))
             return True
         except Exception:
             return False
 
-    async def update_team_motto(self, player_id: int, team_motto: str) -> bool:
-        """UPDATE: Change player's team motto"""
+    async def update_team_motto(self, player_id: int, league_id: int, team_motto: str) -> bool:
+        """UPDATE: Change player's team motto for a specific league"""
         query = """
-                UPDATE players
+                UPDATE player_leagues
                 SET team_motto = %s
-                WHERE id = %s
+                WHERE player_id = %s \
+                  AND league_id = %s
                 """
-        await self.db.execute_query(query, (team_motto, player_id))
+        await self.db.execute_query(query, (team_motto, player_id, league_id))
         return True
+
+    async def get_player_league_info(self, player_id: int, league_id: int) -> Optional[PlayerLeague]:
+        """READ: Get player's league-specific information"""
+        query = """
+                SELECT player_id, league_id, team_name, team_motto, joined_at
+                FROM player_leagues
+                WHERE player_id = %s \
+                  AND league_id = %s
+                """
+        row = await self.db.fetch_one(query, (player_id, league_id))
+        return PlayerLeague(*row) if row else None
 
     async def update_password(self, player_id: int, password_hash: str) -> bool:
         """UPDATE: Update player's password"""

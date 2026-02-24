@@ -637,9 +637,10 @@ class TestLeagueRepository:
     async def test_list_players_in_league(self, league_repo, mock_db):
         # Arrange
         now = datetime.now()
+        # Fixed: Player table has 6 fields
         mock_db.fetch_all.return_value = [
-            (1, 111, "player1", None, "Team 1", "Motto 1", "UTC", now),
-            (2, 222, "player2", None, "Team 2", "Motto 2", "UTC", now)
+            (1, 111, "player1", None, "UTC", now),
+            (2, 222, "player2", None, "UTC", now)
         ]
 
         # Act
@@ -676,14 +677,13 @@ class TestPlayerRepository:
     async def test_create_player_success(self, player_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "Test Team", "Motto", "UTC", now)
+        # Fixed: Player table has 6 fields: id, discord_user_id, username, password, timezone, created_at
+        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "UTC", now)
 
         # Act
         result = await player_repo.create_player(
             username="testuser",
             discord_user_id=123456789,
-            team_name="Test Team",
-            team_motto="Motto",
             timezone="UTC"
         )
 
@@ -691,6 +691,7 @@ class TestPlayerRepository:
         assert result is not None
         assert result.id == 1
         assert result.username == "testuser"
+        assert result.timezone == "UTC"
 
     async def test_create_player_failure(self, player_repo, mock_db):
         # Arrange
@@ -703,7 +704,8 @@ class TestPlayerRepository:
     async def test_get_player_by_id(self, player_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "Test Team", "Motto", "UTC", now)
+        # Fixed: Player table has 6 fields
+        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "UTC", now)
 
         # Act
         result = await player_repo.get_player_by_id(player_id=1)
@@ -715,7 +717,8 @@ class TestPlayerRepository:
     async def test_get_player_by_discord_id(self, player_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "Test Team", "Motto", "UTC", now)
+        # Fixed: Player table has 6 fields
+        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "UTC", now)
 
         # Act
         result = await player_repo.get_player_by_discord_id(discord_user_id=123456789)
@@ -727,7 +730,8 @@ class TestPlayerRepository:
     async def test_get_player_by_username(self, player_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "Test Team", "Motto", "UTC", now)
+        # Fixed: Player table has 6 fields
+        mock_db.fetch_one.return_value = (1, 123456789, "testuser", None, "UTC", now)
 
         # Act
         result = await player_repo.get_player_by_username(username="testuser")
@@ -739,9 +743,10 @@ class TestPlayerRepository:
     async def test_list_players_in_league(self, player_repo, mock_db):
         # Arrange
         now = datetime.now()
+        # Fixed: Player table has 6 fields
         mock_db.fetch_all.return_value = [
-            (1, 111, "player1", None, "Team 1", "Motto 1", "UTC", now),
-            (2, 222, "player2", None, "Team 2", "Motto 2", "UTC", now)
+            (1, 111, "player1", None, "UTC", now),
+            (2, 222, "player2", None, "UTC", now)
         ]
 
         # Act
@@ -780,15 +785,44 @@ class TestPlayerRepository:
     async def test_add_player_to_league_success(self, player_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, 1, now)
+        # Fixed: Correct order is (player_id, league_id, team_name, team_motto, joined_at)
+        mock_db.fetch_one.return_value = (1, 1, "Test Team", "Test Motto", now)
 
         # Act
-        result = await player_repo.add_player_to_league(player_id=1, league_id=1)
+        result = await player_repo.add_player_to_league(
+            player_id=1,
+            league_id=1,
+            team_name="Test Team",
+            team_motto="Test Motto"
+        )
 
         # Assert
         assert result is not None
         assert result.player_id == 1
         assert result.league_id == 1
+        assert result.team_name == "Test Team"
+        assert result.team_motto == "Test Motto"
+
+    async def test_add_player_to_league_without_team_info(self, player_repo, mock_db):
+        # Arrange
+        now = datetime.now()
+        # Fixed: Correct order and provide team_name and team_motto parameters
+        mock_db.fetch_one.return_value = (1, 1, None, None, now)
+
+        # Act
+        result = await player_repo.add_player_to_league(
+            player_id=1,
+            league_id=1,
+            team_name=None,
+            team_motto=None
+        )
+
+        # Assert
+        assert result is not None
+        assert result.player_id == 1
+        assert result.league_id == 1
+        assert result.team_name is None
+        assert result.team_motto is None
 
     async def test_add_player_to_league_failure(self, player_repo, mock_db):
         # Arrange
@@ -796,7 +830,12 @@ class TestPlayerRepository:
 
         # Act & Assert
         with pytest.raises(ValueError, match="Failed to add player to league"):
-            await player_repo.add_player_to_league(player_id=1, league_id=1)
+            await player_repo.add_player_to_league(
+                player_id=1,
+                league_id=1,
+                team_name="Test Team",
+                team_motto="Test Motto"
+            )
 
     async def test_remove_player_from_league(self, player_repo, mock_db):
         # Act
@@ -857,8 +896,9 @@ class TestPlayerRepository:
         assert result == 3
 
     async def test_update_team_name_success(self, player_repo, mock_db):
+        # Updated: Now requires league_id parameter
         # Act
-        result = await player_repo.update_team_name(player_id=1, team_name="New Team")
+        result = await player_repo.update_team_name(player_id=1, league_id=1, team_name="New Team")
 
         # Assert
         assert result is True
@@ -868,19 +908,49 @@ class TestPlayerRepository:
         # Arrange
         mock_db.execute_query.side_effect = Exception("Database error")
 
+        # Updated: Now requires league_id parameter
         # Act
-        result = await player_repo.update_team_name(player_id=1, team_name="New Team")
+        result = await player_repo.update_team_name(player_id=1, league_id=1, team_name="New Team")
 
         # Assert
         assert result is False
 
     async def test_update_team_motto(self, player_repo, mock_db):
+        # Updated: Now requires league_id parameter
         # Act
-        result = await player_repo.update_team_motto(player_id=1, team_motto="New Motto")
+        result = await player_repo.update_team_motto(player_id=1, league_id=1, team_motto="New Motto")
 
         # Assert
         assert result is True
         mock_db.execute_query.assert_called_once()
+
+    async def test_get_player_league_info(self, player_repo, mock_db):
+        # New test for getting league-specific player information
+        # Arrange
+        now = datetime.now()
+        # Fixed: Correct order is (player_id, league_id, team_name, team_motto, joined_at)
+        mock_db.fetch_one.return_value = (1, 1, "Team Name", "Team Motto", now)
+
+        # Act
+        result = await player_repo.get_player_league_info(player_id=1, league_id=1)
+
+        # Assert
+        assert result is not None
+        assert result.player_id == 1
+        assert result.league_id == 1
+        assert result.team_name == "Team Name"
+        assert result.team_motto == "Team Motto"
+
+    async def test_get_player_league_info_not_found(self, player_repo, mock_db):
+        # New test for when player is not in league
+        # Arrange
+        mock_db.fetch_one.return_value = None
+
+        # Act
+        result = await player_repo.get_player_league_info(player_id=999, league_id=1)
+
+        # Assert
+        assert result is None
 
     async def test_update_password(self, player_repo, mock_db):
         # Act
