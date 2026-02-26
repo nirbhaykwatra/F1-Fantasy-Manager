@@ -55,6 +55,9 @@ CREATE TABLE drivers (
     constructor_id  INT NOT NULL REFERENCES constructors(id) ON DELETE CASCADE,
     ergast_id       TEXT,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,          -- false = excluded/reserve driver
+    date_of_birth   DATE,
+    nationality     TEXT,
+    driver_image_url TEXT,
     UNIQUE (season_id, code, number)
 );
 
@@ -100,6 +103,7 @@ CREATE TABLE leagues (
     season_id       INT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
     embed_color     INT NOT NULL DEFAULT 15135274,          -- 0xE8272A in decimal
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    counterpick_limit INT NOT NULL DEFAULT 3,
     UNIQUE (discord_guild_id, name),                        -- No duplicate league names per guild
     UNIQUE (season_id, name)                                -- No duplicate league names per season
 );
@@ -109,6 +113,7 @@ CREATE INDEX idx_leagues_season ON leagues (season_id);
 
 COMMENT ON TABLE leagues IS 'Fantasy leagues - multiple allowed per guild/season';
 COMMENT ON COLUMN leagues.discord_guild_id IS 'NULL for non-Discord clients (PWA, API)';
+COMMENT ON COLUMN leagues.counterpick_limit IS 'Maximum number of counterpicks allowed per player per season in this league';
 
 -- ------------------------------------------------------------
 -- PLAYERS (users who can join multiple leagues)
@@ -179,6 +184,34 @@ CREATE INDEX idx_drafts_grand_prix_league ON drafts (grand_prix_id, league_id);
 COMMENT ON TABLE drafts IS 'Player draft selections per Grand Prix per league - allows different teams in different leagues';
 COMMENT ON COLUMN drafts.wildcard_id IS 'The "bogey" driver (scores points based on position in the top 10 - can be negative)';
 
+-- ============================================================
+-- DRIVER EXHAUSTION TRACKING
+-- Tracks consecutive uses of drivers to enforce the exhaustion rule
+-- ============================================================
+
+CREATE TABLE driver_exhaustion (
+    id              INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    player_id       INT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    league_id       INT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+    driver_id       INT NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+    last_grand_prix_id INT NOT NULL REFERENCES grands_prix(id) ON DELETE CASCADE,
+    consecutive_uses INT NOT NULL DEFAULT 1,
+    is_exhausted    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (player_id, league_id, driver_id),
+    CHECK (consecutive_uses >= 0)
+);
+
+CREATE INDEX idx_driver_exhaustion_player_league ON driver_exhaustion (player_id, league_id);
+CREATE INDEX idx_driver_exhaustion_driver ON driver_exhaustion (driver_id);
+CREATE INDEX idx_driver_exhaustion_exhausted ON driver_exhaustion (player_id, league_id) WHERE is_exhausted = TRUE;
+
+COMMENT ON TABLE driver_exhaustion IS 'Tracks consecutive driver usage to enforce exhaustion rules';
+COMMENT ON COLUMN driver_exhaustion.consecutive_uses IS 'Number of consecutive GPs this driver has been used';
+COMMENT ON COLUMN driver_exhaustion.is_exhausted IS 'TRUE if driver was used 2 GPs in a row and must sit out next GP';
+
 -- ------------------------------------------------------------
 -- COUNTERPICKS (driver bans) - League-specific
 -- ------------------------------------------------------------
@@ -202,6 +235,25 @@ CREATE INDEX idx_counterpicks_grand_prix_league ON counterpicks (grand_prix_id, 
 CREATE INDEX idx_counterpicks_target ON counterpicks (grand_prix_id, league_id, target_player_id);
 
 COMMENT ON TABLE counterpicks IS 'Driver bans - one per player per Grand Prix per league';
+
+-- ------------------------------------------------------------
+-- COUNTERPICK USAGE TRACKING
+-- ------------------------------------------------------------
+-- Table to track counterpick usage per player per league per season
+CREATE TABLE counterpick_usage (
+    player_id       INT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    league_id       INT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+    season_id       INT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+    used_count      INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (player_id, league_id, season_id),
+    CHECK (used_count >= 0)
+);
+
+CREATE INDEX idx_counterpick_usage_player_league ON counterpick_usage (player_id, league_id);
+CREATE INDEX idx_counterpick_usage_season ON counterpick_usage (season_id);
+
+COMMENT ON TABLE counterpick_usage IS 'Tracks total counterpicks used by each player per league per season';
+COMMENT ON COLUMN counterpick_usage.used_count IS 'Number of counterpicks used this season (increments when counterpick is made for a new GP)';
 
 -- ------------------------------------------------------------
 -- RACE RESULTS (official finishing positions per session)
@@ -433,6 +485,92 @@ ORDER BY p.id, pl.joined_at DESC;
 
 COMMENT ON VIEW v_player_leagues IS 'Shows all leagues each player participates in';
 
+-- View for driver draft stats
+CREATE OR REPLACE VIEW v_driver_draft_stats AS
+SELECT
+    d.id AS driver_id,
+    d.code,
+    d.first_name,
+    d.last_name,
+    d.season_id,
+    dr.league_id,
+    l.name AS league_name,
+
+    -- Count times drafted as any driver position (excluding wildcard/bogey)
+    COUNT(DISTINCT CASE
+        WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id
+        THEN dr.id
+    END) AS times_drafted_as_main,
+
+    -- Count times drafted as wildcard/bogey
+    COUNT(DISTINCT CASE
+        WHEN dr.wildcard_id = d.id
+        THEN dr.id
+    END) AS times_drafted_as_bogey,
+
+    -- Total times drafted (any position)
+    COUNT(DISTINCT CASE
+        WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id OR dr.wildcard_id = d.id
+        THEN dr.id
+    END) AS total_times_drafted,
+
+    -- Unique players who drafted this driver
+    COUNT(DISTINCT dr.player_id) AS unique_players_drafted_by
+
+FROM drivers d
+LEFT JOIN drafts dr ON (
+    dr.driver1_id = d.id OR
+    dr.driver2_id = d.id OR
+    dr.driver3_id = d.id OR
+    dr.wildcard_id = d.id
+)
+LEFT JOIN leagues l ON l.id = dr.league_id
+GROUP BY d.id, d.code, d.first_name, d.last_name, d.season_id, dr.league_id, l.name
+ORDER BY total_times_drafted DESC;
+
+COMMENT ON VIEW v_driver_draft_stats IS 'Driver draft frequency statistics per league';
+
+-- View for season-wide (across all leagues) stats
+CREATE OR REPLACE VIEW v_driver_draft_stats_season AS
+SELECT
+    d.id AS driver_id,
+    d.code,
+    d.first_name,
+    d.last_name,
+    d.season_id,
+    s.year AS season_year,
+
+    COUNT(DISTINCT CASE
+        WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id
+        THEN dr.id
+    END) AS times_drafted_as_main,
+
+    COUNT(DISTINCT CASE
+        WHEN dr.wildcard_id = d.id
+        THEN dr.id
+    END) AS times_drafted_as_bogey,
+
+    COUNT(DISTINCT CASE
+        WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id OR dr.wildcard_id = d.id
+        THEN dr.id
+    END) AS total_times_drafted,
+
+    COUNT(DISTINCT dr.player_id) AS unique_players_drafted_by,
+    COUNT(DISTINCT dr.league_id) AS leagues_drafted_in
+
+FROM drivers d
+JOIN seasons s ON s.id = d.season_id
+LEFT JOIN drafts dr ON (
+    dr.driver1_id = d.id OR
+    dr.driver2_id = d.id OR
+    dr.driver3_id = d.id OR
+    dr.wildcard_id = d.id
+)
+GROUP BY d.id, d.code, d.first_name, d.last_name, d.season_id, s.year
+ORDER BY total_times_drafted DESC;
+
+COMMENT ON VIEW v_driver_draft_stats_season IS 'Driver draft frequency statistics across all leagues in a season';
+
 -- ============================================================
 -- TRIGGER FUNCTIONS
 -- ============================================================
@@ -464,6 +602,296 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION validate_draft_constructor_driver IS 'Ensures at least one selected driver belongs to the chosen constructor';
 
+-- Function to validate counterpick constraints
+CREATE OR REPLACE FUNCTION validate_counterpick_constraints()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_season_id INT;
+    v_counterpick_limit INT;
+    v_used_count INT;
+    v_target_counterpick_count INT;
+BEGIN
+    -- Get season_id from grand_prix
+    SELECT gp.season_id, l.counterpick_limit
+    INTO v_season_id, v_counterpick_limit
+    FROM grands_prix gp
+    JOIN leagues l ON l.id = NEW.league_id
+    WHERE gp.id = NEW.grand_prix_id;
+
+    -- Check if player has exceeded their seasonal counterpick limit
+    -- Get current usage count
+    SELECT used_count
+    INTO v_used_count
+    FROM counterpick_usage
+    WHERE player_id = NEW.picking_player_id
+      AND league_id = NEW.league_id
+      AND season_id = v_season_id;
+
+    -- If this is a new counterpick (INSERT or UPDATE changing GP), check the limit
+    IF (TG_OP = 'INSERT') OR
+       (TG_OP = 'UPDATE' AND OLD.grand_prix_id IS DISTINCT FROM NEW.grand_prix_id) THEN
+
+        -- Check if this is a completely new counterpick for a new grand prix
+        IF NOT EXISTS (
+            SELECT 1 FROM counterpicks
+            WHERE picking_player_id = NEW.picking_player_id
+              AND league_id = NEW.league_id
+              AND grand_prix_id = NEW.grand_prix_id
+              AND (TG_OP = 'UPDATE' AND id != NEW.id OR TG_OP = 'INSERT')
+        ) THEN
+            IF v_used_count >= v_counterpick_limit THEN
+                RAISE EXCEPTION 'Counterpick limit exceeded: Player % has already used % of % counterpicks this season in league %',
+                    NEW.picking_player_id, v_used_count, v_counterpick_limit, NEW.league_id;
+            END IF;
+        END IF;
+    END IF;
+
+    -- Check if target player already has 2 counterpicks against them for this GP
+    SELECT COUNT(*)
+    INTO v_target_counterpick_count
+    FROM counterpicks
+    WHERE grand_prix_id = NEW.grand_prix_id
+      AND league_id = NEW.league_id
+      AND target_player_id = NEW.target_player_id
+      AND (TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND id != NEW.id));
+
+    IF v_target_counterpick_count >= 2 THEN
+        RAISE EXCEPTION 'Target player % already has maximum 2 counterpicks against them for GP % in league %',
+            NEW.target_player_id, NEW.grand_prix_id, NEW.league_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION validate_counterpick_constraints IS 'Enforces counterpick limits: seasonal limit per player and max 2 counterpicks per target per GP';
+
+-- Function to update counterpick usage tracking
+CREATE OR REPLACE FUNCTION update_counterpick_usage()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_season_id INT;
+BEGIN
+    -- Get season_id from grand_prix
+    SELECT season_id INTO v_season_id
+    FROM grands_prix
+    WHERE id = NEW.grand_prix_id;
+
+    -- Insert or increment usage count
+    INSERT INTO counterpick_usage (player_id, league_id, season_id, used_count)
+    VALUES (NEW.picking_player_id, NEW.league_id, v_season_id, 1)
+    ON CONFLICT (player_id, league_id, season_id)
+    DO UPDATE SET used_count = counterpick_usage.used_count + 1;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION update_counterpick_usage IS 'Increments counterpick usage when a new counterpick is created';
+
+-- Function to decrement counterpick usage when counterpick is deleted
+CREATE OR REPLACE FUNCTION decrement_counterpick_usage()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_season_id INT;
+BEGIN
+    -- Get season_id from grand_prix
+    SELECT season_id INTO v_season_id
+    FROM grands_prix
+    WHERE id = OLD.grand_prix_id;
+
+    -- Decrement usage count
+    UPDATE counterpick_usage
+    SET used_count = GREATEST(used_count - 1, 0)
+    WHERE player_id = OLD.picking_player_id
+      AND league_id = OLD.league_id
+      AND season_id = v_season_id;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION decrement_counterpick_usage IS 'Decrements counterpick usage when a counterpick is deleted';
+
+-- Function to validate draft rules (3+ constructors, exhaustion, counterpicks)
+CREATE OR REPLACE FUNCTION validate_draft_rules()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_constructor_count INT;
+    v_exhausted_drivers INT[];
+    v_counterpicked_driver_id INT;
+    v_driver_ids INT[];
+BEGIN
+    -- Collect all driver IDs being drafted
+    v_driver_ids := ARRAY[NEW.driver1_id, NEW.driver2_id, NEW.driver3_id, NEW.wildcard_id];
+
+    -- Rule 1: Check if at least 3 constructors are represented among the 4 drivers
+    SELECT COUNT(DISTINCT d.constructor_id)
+    INTO v_constructor_count
+    FROM drivers d
+    WHERE d.id = ANY(v_driver_ids);
+
+    IF v_constructor_count < 3 THEN
+        RAISE EXCEPTION 'Draft must include drivers from at least 3 different constructors. Found only % constructor(s).', v_constructor_count;
+    END IF;
+
+    -- Rule 2: Check for exhausted drivers (used 2 GPs in a row)
+    SELECT ARRAY_AGG(driver_id)
+    INTO v_exhausted_drivers
+    FROM driver_exhaustion
+    WHERE player_id = NEW.player_id
+      AND league_id = NEW.league_id
+      AND is_exhausted = TRUE
+      AND driver_id = ANY(v_driver_ids);
+
+    IF v_exhausted_drivers IS NOT NULL AND array_length(v_exhausted_drivers, 1) > 0 THEN
+        RAISE EXCEPTION 'Cannot draft exhausted driver(s): %. These drivers were used in the previous 2 consecutive GPs.', v_exhausted_drivers;
+    END IF;
+
+    -- Rule 3: Check for counterpicked drivers
+    SELECT target_driver_id
+    INTO v_counterpicked_driver_id
+    FROM counterpicks
+    WHERE grand_prix_id = NEW.grand_prix_id
+      AND league_id = NEW.league_id
+      AND target_player_id = NEW.player_id
+      AND target_driver_id = ANY(v_driver_ids)
+    LIMIT 1;
+
+    IF v_counterpicked_driver_id IS NOT NULL THEN
+        RAISE EXCEPTION 'Cannot draft driver ID %: This driver has been counterpicked against you for this Grand Prix.', v_counterpicked_driver_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION validate_draft_rules IS 'Validates draft rules: 3+ constructors, no exhausted drivers, no counterpicked drivers';
+
+-- Function to update driver exhaustion tracking after draft
+CREATE OR REPLACE FUNCTION update_driver_exhaustion()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_driver_id INT;
+    v_driver_ids INT[];
+    v_previous_gp_id INT;
+    v_gp_round_number INT;
+    v_prev_gp_round_number INT;
+    v_exhaustion_record RECORD;
+BEGIN
+    -- Get the round number of the current GP
+    SELECT round_number INTO v_gp_round_number
+    FROM grands_prix
+    WHERE id = NEW.grand_prix_id;
+
+    -- Collect all driver IDs from the new draft
+    v_driver_ids := ARRAY[NEW.driver1_id, NEW.driver2_id, NEW.driver3_id, NEW.wildcard_id];
+
+    -- Get the previous GP for this player in this league
+    SELECT grand_prix_id INTO v_previous_gp_id
+    FROM drafts
+    WHERE player_id = NEW.player_id
+      AND league_id = NEW.league_id
+      AND grand_prix_id != NEW.grand_prix_id
+    ORDER BY grand_prix_id DESC
+    LIMIT 1;
+
+    -- If there was a previous GP, check its round number
+    IF v_previous_gp_id IS NOT NULL THEN
+        SELECT round_number INTO v_prev_gp_round_number
+        FROM grands_prix
+        WHERE id = v_previous_gp_id;
+
+        -- Only update exhaustion if this is the immediately consecutive GP
+        IF v_gp_round_number = v_prev_gp_round_number + 1 THEN
+            -- For each driver in the current draft
+            FOREACH v_driver_id IN ARRAY v_driver_ids
+            LOOP
+                -- Check if this driver was used in the previous GP
+                IF EXISTS (
+                    SELECT 1 FROM drafts
+                    WHERE player_id = NEW.player_id
+                      AND league_id = NEW.league_id
+                      AND grand_prix_id = v_previous_gp_id
+                      AND (driver1_id = v_driver_id
+                           OR driver2_id = v_driver_id
+                           OR driver3_id = v_driver_id
+                           OR wildcard_id = v_driver_id)
+                ) THEN
+                    -- Driver was used in previous GP - increment or mark exhausted
+                    INSERT INTO driver_exhaustion
+                        (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, is_exhausted, updated_at)
+                    VALUES
+                        (NEW.player_id, NEW.league_id, v_driver_id, NEW.grand_prix_id, 2, TRUE, NOW())
+                    ON CONFLICT (player_id, league_id, driver_id)
+                    DO UPDATE SET
+                        consecutive_uses = driver_exhaustion.consecutive_uses + 1,
+                        is_exhausted = TRUE,
+                        last_grand_prix_id = NEW.grand_prix_id,
+                        updated_at = NOW();
+                ELSE
+                    -- Driver was NOT used in previous GP - reset exhaustion
+                    INSERT INTO driver_exhaustion
+                        (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, is_exhausted, updated_at)
+                    VALUES
+                        (NEW.player_id, NEW.league_id, v_driver_id, NEW.grand_prix_id, 1, FALSE, NOW())
+                    ON CONFLICT (player_id, league_id, driver_id)
+                    DO UPDATE SET
+                        consecutive_uses = 1,
+                        is_exhausted = FALSE,
+                        last_grand_prix_id = NEW.grand_prix_id,
+                        updated_at = NOW();
+                END IF;
+            END LOOP;
+
+            -- Reset exhaustion for drivers NOT in current draft (they're resting)
+            UPDATE driver_exhaustion
+            SET consecutive_uses = 0,
+                is_exhausted = FALSE,
+                updated_at = NOW()
+            WHERE player_id = NEW.player_id
+              AND league_id = NEW.league_id
+              AND driver_id != ALL(v_driver_ids)
+              AND is_exhausted = TRUE;
+        ELSE
+            -- Non-consecutive GP - reset all exhaustion and start fresh
+            FOREACH v_driver_id IN ARRAY v_driver_ids
+            LOOP
+                INSERT INTO driver_exhaustion
+                    (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, is_exhausted, updated_at)
+                VALUES
+                    (NEW.player_id, NEW.league_id, v_driver_id, NEW.grand_prix_id, 1, FALSE, NOW())
+                ON CONFLICT (player_id, league_id, driver_id)
+                DO UPDATE SET
+                    consecutive_uses = 1,
+                    is_exhausted = FALSE,
+                    last_grand_prix_id = NEW.grand_prix_id,
+                    updated_at = NOW();
+            END LOOP;
+        END IF;
+    ELSE
+        -- First GP for this player - initialize exhaustion tracking
+        FOREACH v_driver_id IN ARRAY v_driver_ids
+        LOOP
+            INSERT INTO driver_exhaustion
+                (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, is_exhausted, updated_at)
+            VALUES
+                (NEW.player_id, NEW.league_id, v_driver_id, NEW.grand_prix_id, 1, FALSE, NOW())
+            ON CONFLICT (player_id, league_id, driver_id)
+            DO UPDATE SET
+                consecutive_uses = 1,
+                is_exhausted = FALSE,
+                last_grand_prix_id = NEW.grand_prix_id,
+                updated_at = NOW();
+        END LOOP;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION update_driver_exhaustion IS 'Updates driver exhaustion status after a draft is submitted';
+
 -- ============================================================
 -- TRIGGERS
 -- ============================================================
@@ -486,6 +914,56 @@ CREATE TRIGGER trg_drafts_validate_constructor_update
         OLD.constructor_id IS DISTINCT FROM NEW.constructor_id
     )
     EXECUTE FUNCTION validate_draft_constructor_driver();
+
+-- Validate constraints before insert/update
+CREATE TRIGGER trg_counterpicks_validate_constraints
+    BEFORE INSERT OR UPDATE ON counterpicks
+    FOR EACH ROW
+    EXECUTE FUNCTION validate_counterpick_constraints();
+
+-- Track usage after successful insert
+CREATE TRIGGER trg_counterpicks_track_usage_insert
+    AFTER INSERT ON counterpicks
+    FOR EACH ROW
+    EXECUTE FUNCTION update_counterpick_usage();
+
+-- Decrement usage after delete
+CREATE TRIGGER trg_counterpicks_decrement_usage_delete
+    AFTER DELETE ON counterpicks
+    FOR EACH ROW
+    EXECUTE FUNCTION decrement_counterpick_usage();
+
+-- Validate draft rules on INSERT
+CREATE TRIGGER trg_drafts_validate_rules_insert
+    BEFORE INSERT ON drafts
+    FOR EACH ROW
+    EXECUTE FUNCTION validate_draft_rules();
+
+-- Validate draft rules on UPDATE
+CREATE TRIGGER trg_drafts_validate_rules_update
+    BEFORE UPDATE ON drafts
+    FOR EACH ROW
+    WHEN (
+        OLD.driver1_id IS DISTINCT FROM NEW.driver1_id OR
+        OLD.driver2_id IS DISTINCT FROM NEW.driver2_id OR
+        OLD.driver3_id IS DISTINCT FROM NEW.driver3_id OR
+        OLD.wildcard_id IS DISTINCT FROM NEW.wildcard_id
+    )
+    EXECUTE FUNCTION validate_draft_rules();
+
+-- Update exhaustion tracking after successful draft
+CREATE TRIGGER trg_drafts_update_exhaustion
+    AFTER INSERT OR UPDATE ON drafts
+    FOR EACH ROW
+    EXECUTE FUNCTION update_driver_exhaustion();
+
+COMMENT ON TRIGGER trg_drafts_validate_rules_insert ON drafts IS 'Validates all draft rules before insert';
+COMMENT ON TRIGGER trg_drafts_validate_rules_update ON drafts IS 'Validates all draft rules before update (when drivers change)';
+COMMENT ON TRIGGER trg_drafts_update_exhaustion ON drafts IS 'Updates driver exhaustion tracking after draft submission';
+
+COMMENT ON TRIGGER trg_counterpicks_validate_constraints ON counterpicks IS 'Validates counterpick limits before insert/update';
+COMMENT ON TRIGGER trg_counterpicks_track_usage_insert ON counterpicks IS 'Tracks counterpick usage after insert';
+COMMENT ON TRIGGER trg_counterpicks_decrement_usage_delete ON counterpicks IS 'Decrements usage count after delete';
 
 COMMENT ON TRIGGER trg_drafts_validate_constructor_insert ON drafts IS 'Validates constructor-driver relationship on insert';
 COMMENT ON TRIGGER trg_drafts_validate_constructor_update ON drafts IS 'Validates constructor-driver relationship on update (only when relevant fields change)';

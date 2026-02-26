@@ -67,6 +67,9 @@ async def draft_repo(mock_db):
 async def counterpick_repo(mock_db):
     return CounterpickRepository(mock_db)
 
+@pytest_asyncio.fixture
+async def counterpick_repo(mock_db):
+    return CounterpickRepository(mock_db)
 
 @pytest_asyncio.fixture
 async def race_result_repo(mock_db):
@@ -307,7 +310,9 @@ class TestDriverRepository:
 
     async def test_create_driver_success(self, driver_repo, mock_db):
         # Arrange
-        mock_db.fetch_one.return_value = (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True)
+        from datetime import date
+        dob = datetime(1997, 9, 30)
+        mock_db.fetch_one.return_value = (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True, dob, "Dutch", "https://example.com/ver.jpg")
 
         # Act
         result = await driver_repo.create_driver(
@@ -318,7 +323,10 @@ class TestDriverRepository:
             last_name="Verstappen",
             constructor_id=1,
             ergast_id="verstappen",
-            is_active=True
+            is_active=True,
+            date_of_birth=dob,
+            nationality="Dutch",
+            driver_image_url="https://example.com/ver.jpg"
         )
 
         # Assert
@@ -328,6 +336,9 @@ class TestDriverRepository:
         assert result.number == 1
         assert result.first_name == "Max"
         assert result.last_name == "Verstappen"
+        assert result.date_of_birth == dob
+        assert result.nationality == "Dutch"
+        assert result.driver_image_url == "https://example.com/ver.jpg"
 
     async def test_create_driver_failure(self, driver_repo, mock_db):
         # Arrange
@@ -346,7 +357,8 @@ class TestDriverRepository:
 
     async def test_get_driver_by_id(self, driver_repo, mock_db):
         # Arrange
-        mock_db.fetch_one.return_value = (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True)
+        dob = datetime(1997, 9, 30)
+        mock_db.fetch_one.return_value = (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True, dob, "Dutch", "https://example.com/ver.jpg")
 
         # Act
         result = await driver_repo.get_driver_by_id(driver_id=1)
@@ -355,12 +367,17 @@ class TestDriverRepository:
         assert result is not None
         assert result.id == 1
         assert result.code == "VER"
+        assert result.date_of_birth == dob
+        assert result.nationality == "Dutch"
+        assert result.driver_image_url == "https://example.com/ver.jpg"
 
     async def test_list_drivers_by_season_active_only(self, driver_repo, mock_db):
         # Arrange
+        dob1 = datetime(1997, 9, 30)
+        dob2 = datetime(1990, 1, 26)
         mock_db.fetch_all.return_value = [
-            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True),
-            (2, 1, "PER", 11, "Sergio", "Perez", 1, "perez", True)
+            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True, dob1, "Dutch", "https://example.com/ver.jpg"),
+            (2, 1, "PER", 11, "Sergio", "Perez", 1, "perez", True, dob2, "Mexican", "https://example.com/per.jpg")
         ]
 
         # Act
@@ -369,12 +386,16 @@ class TestDriverRepository:
         # Assert
         assert len(result) == 2
         assert all(d.is_active for d in result)
+        assert result[0].date_of_birth == dob1
+        assert result[1].nationality == "Mexican"
 
     async def test_list_drivers_by_season_all(self, driver_repo, mock_db):
         # Arrange
+        dob1 = datetime(1997, 9, 30)
+        dob2 = datetime(1989, 7, 1)
         mock_db.fetch_all.return_value = [
-            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True),
-            (2, 1, "RIC", 3, "Daniel", "Ricciardo", 1, "ricciardo", False)
+            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True, dob1, "Dutch", "https://example.com/ver.jpg"),
+            (2, 1, "RIC", 3, "Daniel", "Ricciardo", 1, "ricciardo", False, dob2, "Australian", None)
         ]
 
         # Act
@@ -382,12 +403,17 @@ class TestDriverRepository:
 
         # Assert
         assert len(result) == 2
+        assert result[0].is_active is True
+        assert result[1].is_active is False
+        assert result[1].driver_image_url is None
 
     async def test_list_drivers_by_constructor(self, driver_repo, mock_db):
         # Arrange
+        dob1 = datetime(1997, 9, 30)
+        dob2 = datetime(1990, 1, 26)
         mock_db.fetch_all.return_value = [
-            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True),
-            (2, 1, "PER", 11, "Sergio", "Perez", 1, "perez", True)
+            (1, 1, "VER", 1, "Max", "Verstappen", 1, "verstappen", True, dob1, "Dutch", "https://example.com/ver.jpg"),
+            (2, 1, "PER", 11, "Sergio", "Perez", 1, "perez", True, dob2, "Mexican", "https://example.com/per.jpg")
         ]
 
         # Act
@@ -396,6 +422,8 @@ class TestDriverRepository:
         # Assert
         assert len(result) == 2
         assert all(d.constructor_id == 1 for d in result)
+        assert result[0].nationality == "Dutch"
+        assert result[1].nationality == "Mexican"
 
 
 # ============================================================
@@ -548,14 +576,15 @@ class TestLeagueRepository:
     async def test_create_league_success(self, league_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, "Test League", 123456789, 1, 0xE8272A, now)
+        mock_db.fetch_one.return_value = (1, "Test League", 123456789, 1, 0xE8272A, now, 3)
 
         # Act
         result = await league_repo.create_league(
             name="Test League",
             season_id=1,
             discord_guild_id=123456789,
-            embed_color=0xE8272A
+            embed_color=0xE8272A,
+            counterpick_limit=3
         )
 
         # Assert
@@ -563,6 +592,7 @@ class TestLeagueRepository:
         assert result.id == 1
         assert result.name == "Test League"
         assert result.discord_guild_id == 123456789
+        assert result.counterpick_limit == 3
 
     async def test_create_league_failure(self, league_repo, mock_db):
         # Arrange
@@ -575,7 +605,7 @@ class TestLeagueRepository:
     async def test_get_league_by_id(self, league_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, "Test League", 123456789, 1, 0xE8272A, now)
+        mock_db.fetch_one.return_value = (1, "Test League", 123456789, 1, 0xE8272A, now, 3)
 
         # Act
         result = await league_repo.get_league_by_id(league_id=1)
@@ -583,11 +613,12 @@ class TestLeagueRepository:
         # Assert
         assert result is not None
         assert result.id == 1
+        assert result.counterpick_limit == 3
 
     async def test_get_league_by_discord_guild(self, league_repo, mock_db):
         # Arrange
         now = datetime.now()
-        mock_db.fetch_one.return_value = (1, "Test League", 123456789, 1, 0xE8272A, now)
+        mock_db.fetch_one.return_value = (1, "Test League", 123456789, 1, 0xE8272A, now, 3)
 
         # Act
         result = await league_repo.get_league_by_discord_guild(discord_guild_id=123456789)
@@ -600,8 +631,8 @@ class TestLeagueRepository:
         # Arrange
         now = datetime.now()
         mock_db.fetch_all.return_value = [
-            (1, "League 1", 123456789, 1, 0xE8272A, now),
-            (2, "League 2", 123456789, 1, 0xE8272A, now)
+            (1, "League 1", 123456789, 1, 0xE8272A, now, 3),
+            (2, "League 2", 123456789, 1, 0xE8272A, now, 5)
         ]
 
         # Act
@@ -609,13 +640,15 @@ class TestLeagueRepository:
 
         # Assert
         assert len(result) == 2
+        assert result[0].counterpick_limit == 3
+        assert result[1].counterpick_limit == 5
 
     async def test_list_leagues_by_season(self, league_repo, mock_db):
         # Arrange
         now = datetime.now()
         mock_db.fetch_all.return_value = [
-            (1, "League 1", 123456789, 1, 0xE8272A, now),
-            (2, "League 2", 987654321, 1, 0xE8272A, now)
+            (1, "League 1", 123456789, 1, 0xE8272A, now, 3),
+            (2, "League 2", 987654321, 1, 0xE8272A, now, 3)
         ]
 
         # Act
@@ -653,6 +686,14 @@ class TestLeagueRepository:
     async def test_update_league_name(self, league_repo, mock_db):
         # Act
         result = await league_repo.update_league_name(league_id=1, name="New Name")
+
+        # Assert
+        assert result is True
+        mock_db.execute_query.assert_called_once()
+
+    async def test_update_league_counterpick_limit(self, league_repo, mock_db):
+        # Act
+        result = await league_repo.update_league_counterpick_limit(league_id=1, counterpick_limit=5)
 
         # Assert
         assert result is True
@@ -1082,6 +1123,166 @@ class TestDraftRepository:
 
 @pytest.mark.asyncio
 class TestCounterpickRepository:
+
+    async def test_get_remaining_counterpicks_with_usage(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.return_value = (3, 1)  # limit=3, used=1
+
+        # Act
+        result = await counterpick_repo.get_remaining_counterpicks(
+            player_id=1, league_id=1, season_id=1
+        )
+
+        # Assert
+        assert result == 2
+
+    async def test_get_remaining_counterpicks_no_usage(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.return_value = (3, 0)  # limit=3, used=0
+
+        # Act
+        result = await counterpick_repo.get_remaining_counterpicks(
+            player_id=1, league_id=1, season_id=1
+        )
+
+        # Assert
+        assert result == 3
+
+    async def test_get_remaining_counterpicks_all_used(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.return_value = (3, 3)  # limit=3, used=3
+
+        # Act
+        result = await counterpick_repo.get_remaining_counterpicks(
+            player_id=1, league_id=1, season_id=1
+        )
+
+        # Assert
+        assert result == 0
+
+    async def test_get_counterpick_usage(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.return_value = (1, 1, 1, 2)
+
+        # Act
+        result = await counterpick_repo.get_counterpick_usage(
+            player_id=1, league_id=1, season_id=1
+        )
+
+        # Assert
+        assert result is not None
+        assert result.player_id == 1
+        assert result.used_count == 2
+
+    async def test_get_counterpick_usage_none(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.return_value = None
+
+        # Act
+        result = await counterpick_repo.get_counterpick_usage(
+            player_id=1, league_id=1, season_id=1
+        )
+
+        # Assert
+        assert result is None
+
+    async def test_get_target_counterpick_count(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.return_value = (2,)
+
+        # Act
+        result = await counterpick_repo.get_target_counterpick_count(
+            target_player_id=2, grand_prix_id=1, league_id=1
+        )
+
+        # Assert
+        assert result == 2
+
+    async def test_can_counterpick_allowed(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.side_effect = [
+            (3, 1),  # get_remaining_counterpicks: limit=3, used=1
+            None,  # get_counterpick: no existing
+            (1,)  # get_target_counterpick_count: 1 existing
+        ]
+
+        # Act
+        can_pick, reason = await counterpick_repo.can_counterpick(
+            picking_player_id=1,
+            target_player_id=2,
+            grand_prix_id=1,
+            league_id=1,
+            season_id=1
+        )
+
+        # Assert
+        assert can_pick is True
+        assert reason == "Counterpick allowed"
+
+    async def test_can_counterpick_no_remaining(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.side_effect = [
+            (3, 3),  # get_remaining_counterpicks: limit=3, used=3
+            None  # get_counterpick: no existing
+        ]
+
+        # Act
+        can_pick, reason = await counterpick_repo.can_counterpick(
+            picking_player_id=1,
+            target_player_id=2,
+            grand_prix_id=1,
+            league_id=1,
+            season_id=1
+        )
+
+        # Assert
+        assert can_pick is False
+        assert "used all your counterpicks" in reason
+
+    async def test_can_counterpick_target_at_limit(self, counterpick_repo, mock_db):
+        # Arrange
+        mock_db.fetch_one.side_effect = [
+            (3, 1),  # get_remaining_counterpicks: limit=3, used=1
+            None,  # get_counterpick: no existing
+            (2,)  # get_target_counterpick_count: 2 existing (at limit)
+        ]
+
+        # Act
+        can_pick, reason = await counterpick_repo.can_counterpick(
+            picking_player_id=1,
+            target_player_id=2,
+            grand_prix_id=1,
+            league_id=1,
+            season_id=1
+        )
+
+        # Assert
+        assert can_pick is False
+        assert "maximum of 2 counterpicks" in reason
+
+    async def test_can_counterpick_update_allowed(self, counterpick_repo, mock_db):
+        # Arrange
+        now = datetime.now()
+        existing_counterpick = (1, 1, 1, 1, 2, 5, now)  # existing counterpick targeting player 2
+
+        mock_db.fetch_one.side_effect = [
+            (3, 2),  # get_remaining_counterpicks: limit=3, used=2
+            existing_counterpick,  # get_counterpick: existing counterpick
+            (1,)  # get_target_counterpick_count: 1 for new target
+        ]
+
+        # Act - changing target from player 2 to player 3
+        can_pick, reason = await counterpick_repo.can_counterpick(
+            picking_player_id=1,
+            target_player_id=3,  # Different target
+            grand_prix_id=1,
+            league_id=1,
+            season_id=1
+        )
+
+        # Assert
+        assert can_pick is True
+        assert reason == "Counterpick allowed"
 
     async def test_create_counterpick_success(self, counterpick_repo, mock_db):
         # Arrange

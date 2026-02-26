@@ -40,6 +40,9 @@ class Driver:
     constructor_id: int
     ergast_id: Optional[str]
     is_active: bool
+    date_of_birth: Optional[datetime]
+    nationality: Optional[str]
+    driver_image_url: Optional[str]
 
 
 @dataclass
@@ -70,6 +73,7 @@ class League:
     season_id: int
     embed_color: int
     created_at: datetime
+    counterpick_limit: int = 3
 
 
 @dataclass
@@ -109,6 +113,18 @@ class Draft:
     created_at: datetime
     updated_at: datetime
 
+@dataclass
+class DriverExhaustion:
+    """Tracks consecutive driver usage for exhaustion rules"""
+    id: int
+    player_id: int
+    league_id: int
+    driver_id: int
+    last_grand_prix_id: int
+    consecutive_uses: int
+    is_exhausted: bool
+    created_at: datetime
+    updated_at: datetime
 
 @dataclass
 class Counterpick:
@@ -121,6 +137,13 @@ class Counterpick:
     target_driver_id: int
     created_at: datetime
 
+@dataclass
+class CounterpickUsage:
+    """Tracks counterpick usage per player per league per season"""
+    player_id: int
+    league_id: int
+    season_id: int
+    used_count: int
 
 @dataclass
 class RaceResult:
@@ -326,17 +349,22 @@ class DriverRepository:
             last_name: str,
             constructor_id: int,
             ergast_id: Optional[str] = None,
-            is_active: bool = True
+            is_active: bool = True,
+            date_of_birth: Optional[datetime] = None,
+            nationality: Optional[str] = None,
+            driver_image_url: Optional[str] = None
     ) -> Optional[Driver]:
         """CREATE: Add a new driver"""
         query = """
-                INSERT INTO drivers (season_id, code, number, first_name, last_name, constructor_id, ergast_id, is_active)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s) 
-                RETURNING id, season_id, code, number, first_name, last_name, constructor_id, ergast_id, is_active
+                INSERT INTO drivers (season_id, code, number, first_name, last_name, constructor_id, ergast_id, \
+                                     is_active, date_of_birth, nationality, driver_image_url)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, \
+                        %s) RETURNING id, season_id, code, number, first_name, last_name, constructor_id, ergast_id, is_active, date_of_birth, nationality, driver_image_url
                 """
         try:
-            row = await self.db.fetch_one(query, (season_id, code, number, first_name, last_name, constructor_id, ergast_id,
-                                                  is_active))
+            row = await self.db.fetch_one(query,
+                                          (season_id, code, number, first_name, last_name, constructor_id, ergast_id,
+                                           is_active, date_of_birth, nationality, driver_image_url))
             return Driver(*row) if row else None
         except Exception as e:
             raise ValueError(f"Driver creation failed: {e}")
@@ -352,11 +380,35 @@ class DriverRepository:
                        last_name, \
                        constructor_id, \
                        ergast_id, \
-                       is_active
+                       is_active, \
+                       date_of_birth, \
+                       nationality, \
+                       driver_image_url
                 FROM drivers
                 WHERE id = %s
                 """
         row = await self.db.fetch_one(query, (driver_id,))
+        return Driver(*row) if row else None
+
+    async def get_driver_by_code(self, season_id: int, code: str) -> Optional[Driver]:
+        """READ: Get driver by code"""
+        query = """
+                SELECT id, \
+                       season_id, \
+                       code, \
+                       number, \
+                       first_name, \
+                       last_name, \
+                       constructor_id, \
+                       ergast_id, \
+                       is_active, \
+                       date_of_birth, \
+                       nationality, \
+                       driver_image_url
+                FROM drivers
+                WHERE season_id = %s AND code = %s \
+                """
+        row = await self.db.fetch_one(query, (season_id, code))
         return Driver(*row) if row else None
 
     async def list_drivers_by_season(self, season_id: int, active_only: bool = True) -> List[Driver]:
@@ -370,7 +422,10 @@ class DriverRepository:
                        last_name, \
                        constructor_id, \
                        ergast_id, \
-                       is_active
+                       is_active, \
+                       date_of_birth, \
+                       nationality, \
+                       driver_image_url
                 FROM drivers
                 WHERE season_id = %s
                 """
@@ -392,7 +447,10 @@ class DriverRepository:
                        last_name, \
                        constructor_id, \
                        ergast_id, \
-                       is_active
+                       is_active, \
+                       date_of_birth, \
+                       nationality, \
+                       driver_image_url
                 FROM drivers
                 WHERE constructor_id = %s \
                   AND is_active = TRUE
@@ -581,15 +639,17 @@ class LeagueRepository:
             name: str,
             season_id: int,
             discord_guild_id: Optional[int] = None,
-            embed_color: int = 0xE8272A
+            embed_color: int = 15135274,
+            counterpick_limit: int = 3
     ) -> Optional[League]:
-        """CREATE: Create a new league"""
+        """CREATE: Add a new league"""
         query = """
-                INSERT INTO leagues (name, discord_guild_id, season_id, embed_color)
-                VALUES (%s, %s, %s, %s) RETURNING id, name, discord_guild_id, season_id, embed_color, created_at
+                INSERT INTO leagues (name, discord_guild_id, season_id, embed_color, counterpick_limit)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, name, discord_guild_id, season_id, embed_color, created_at, counterpick_limit
                 """
         try:
-            row = await self.db.fetch_one(query, (name, discord_guild_id, season_id, embed_color))
+            row = await self.db.fetch_one(query, (name, discord_guild_id, season_id, embed_color, counterpick_limit))
             return League(*row) if row else None
         except Exception as e:
             raise ValueError(f"League creation failed: {e}")
@@ -597,7 +657,7 @@ class LeagueRepository:
     async def get_league_by_id(self, league_id: int) -> Optional[League]:
         """READ: Get league by ID"""
         query = """
-                SELECT id, name, discord_guild_id, season_id, embed_color, created_at
+                SELECT id, name, discord_guild_id, season_id, embed_color, created_at, counterpick_limit
                 FROM leagues
                 WHERE id = %s
                 """
@@ -605,22 +665,23 @@ class LeagueRepository:
         return League(*row) if row else None
 
     async def get_league_by_discord_guild(self, discord_guild_id: int) -> Optional[League]:
-        """READ: Get league by Discord guild ID"""
+        """READ: Get league by Discord guild ID (returns first if multiple exist)"""
         query = """
-                SELECT id, name, discord_guild_id, season_id, embed_color, created_at
+                SELECT id, name, discord_guild_id, season_id, embed_color, created_at, counterpick_limit
                 FROM leagues
                 WHERE discord_guild_id = %s
+                LIMIT 1
                 """
         row = await self.db.fetch_one(query, (discord_guild_id,))
         return League(*row) if row else None
 
     async def get_leagues_by_discord_guild(self, discord_guild_id: int) -> List[League]:
-        """READ: Get all leagues by Discord guild ID"""
+        """READ: Get all leagues for a Discord guild"""
         query = """
-                SELECT id, name, discord_guild_id, season_id, embed_color, created_at
+                SELECT id, name, discord_guild_id, season_id, embed_color, created_at, counterpick_limit
                 FROM leagues
                 WHERE discord_guild_id = %s
-                ORDER BY created_at
+                ORDER BY created_at DESC
                 """
         rows = await self.db.fetch_all(query, (discord_guild_id,))
         return [League(*row) for row in rows]
@@ -628,10 +689,10 @@ class LeagueRepository:
     async def list_leagues_by_season(self, season_id: int) -> List[League]:
         """READ: Get all leagues for a season"""
         query = """
-                SELECT id, name, discord_guild_id, season_id, embed_color, created_at
+                SELECT id, name, discord_guild_id, season_id, embed_color, created_at, counterpick_limit
                 FROM leagues
                 WHERE season_id = %s
-                ORDER BY created_at
+                ORDER BY created_at DESC
                 """
         rows = await self.db.fetch_all(query, (season_id,))
         return [League(*row) for row in rows]
@@ -666,6 +727,16 @@ class LeagueRepository:
                 WHERE id = %s
                 """
         await self.db.execute_query(query, (name, league_id))
+        return True
+
+    async def update_league_counterpick_limit(self, league_id: int, counterpick_limit: int) -> bool:
+        """UPDATE: Update league's counterpick limit"""
+        query = """
+                UPDATE leagues
+                SET counterpick_limit = %s
+                WHERE id = %s
+                """
+        await self.db.execute_query(query, (counterpick_limit, league_id))
         return True
 
     async def delete_league(self, league_id: int) -> bool:
@@ -1002,6 +1073,61 @@ class DraftRepository:
         return True
 
 
+class DriverExhaustionRepository:
+    """Handles all database operations for driver exhaustion tracking"""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def get_exhausted_drivers(
+            self,
+            player_id: int,
+            league_id: int
+    ) -> List[DriverExhaustion]:
+        """READ: Get all exhausted drivers for a player in a league"""
+        query = """
+                SELECT id, player_id, league_id, driver_id, last_grand_prix_id, 
+                       consecutive_uses, is_exhausted, created_at, updated_at
+                FROM driver_exhaustion
+                WHERE player_id = %s AND league_id = %s AND is_exhausted = TRUE
+                ORDER BY driver_id
+                """
+        rows = await self.db.fetch_all(query, (player_id, league_id))
+        return [DriverExhaustion(*row) for row in rows]
+
+    async def get_driver_exhaustion_status(
+            self,
+            player_id: int,
+            league_id: int,
+            driver_id: int
+    ) -> Optional[DriverExhaustion]:
+        """READ: Get exhaustion status for a specific driver"""
+        query = """
+                SELECT id, player_id, league_id, driver_id, last_grand_prix_id, 
+                       consecutive_uses, is_exhausted, created_at, updated_at
+                FROM driver_exhaustion
+                WHERE player_id = %s AND league_id = %s AND driver_id = %s
+                """
+        row = await self.db.fetch_one(query, (player_id, league_id, driver_id))
+        return DriverExhaustion(*row) if row else None
+
+    async def get_all_exhaustion_for_player(
+            self,
+            player_id: int,
+            league_id: int
+    ) -> List[DriverExhaustion]:
+        """READ: Get all driver exhaustion records for a player in a league"""
+        query = """
+                SELECT id, player_id, league_id, driver_id, last_grand_prix_id, 
+                       consecutive_uses, is_exhausted, created_at, updated_at
+                FROM driver_exhaustion
+                WHERE player_id = %s AND league_id = %s
+                ORDER BY driver_id
+                """
+        rows = await self.db.fetch_all(query, (player_id, league_id))
+        return [DriverExhaustion(*row) for row in rows]
+
+
 class CounterpickRepository:
     """Handles all database operations for counterpicks"""
 
@@ -1100,6 +1226,111 @@ class CounterpickRepository:
                 """
         rows = await self.db.fetch_all(query, (player_id, grand_prix_id, player_id))
         return [Counterpick(*row) for row in rows]
+
+    async def get_counterpicks_for_player_in_league(
+            self,
+            player_id: int,
+            league_id: int
+    ) -> List[Counterpick]:
+        """READ: Get all counterpicks for a player in a specific league"""
+        query = """
+                SELECT id, grand_prix_id, league_id, picking_player_id, target_player_id, target_driver_id, created_at
+                FROM counterpicks
+                WHERE picking_player_id = %s AND league_id = %s
+        """
+        rows = await self.db.fetch_all(query, (player_id, league_id))
+        return [Counterpick(*row) for row in rows]
+
+    async def get_remaining_counterpicks(
+            self,
+            player_id: int,
+            league_id: int,
+            season_id: int
+    ) -> int:
+        """Get the number of remaining counterpicks for a player in a league this season"""
+        query = """
+                SELECT l.counterpick_limit, COALESCE(cu.used_count, 0) as used_count
+                FROM leagues l
+                         LEFT JOIN counterpick_usage cu ON cu.league_id = l.id
+                    AND cu.player_id = %s
+                    AND cu.season_id = %s
+                WHERE l.id = %s
+                """
+        row = await self.db.fetch_one(query, (player_id, season_id, league_id))
+        if row:
+            limit, used = row
+            return max(0, limit - used)
+        return 0
+
+    async def get_counterpick_usage(
+            self,
+            player_id: int,
+            league_id: int,
+            season_id: int
+    ) -> Optional[CounterpickUsage]:
+        """Get counterpick usage stats for a player in a league this season"""
+        query = """
+                SELECT player_id, league_id, season_id, used_count
+                FROM counterpick_usage
+                WHERE player_id = %s \
+                  AND league_id = %s \
+                  AND season_id = %s
+                """
+        row = await self.db.fetch_one(query, (player_id, league_id, season_id))
+        return CounterpickUsage(*row) if row else None
+
+    async def get_target_counterpick_count(
+            self,
+            target_player_id: int,
+            grand_prix_id: int,
+            league_id: int
+    ) -> int:
+        """Get the number of counterpicks already targeting a player for a specific GP"""
+        query = """
+                SELECT COUNT(*)
+                FROM counterpicks
+                WHERE target_player_id = %s
+                  AND grand_prix_id = %s
+                  AND league_id = %s
+                """
+        row = await self.db.fetch_one(query, (target_player_id, grand_prix_id, league_id))
+        return row[0] if row else 0
+
+    async def can_counterpick(
+            self,
+            picking_player_id: int,
+            target_player_id: int,
+            grand_prix_id: int,
+            league_id: int,
+            season_id: int
+    ) -> tuple[bool, str]:
+        """
+        Check if a player can make a counterpick
+
+        Returns:
+            (can_counterpick: bool, reason: str) - True if allowed, False with reason if not
+        """
+        # Check if player has counterpicks remaining
+        remaining = await self.get_remaining_counterpicks(picking_player_id, league_id, season_id)
+
+        # Check if this is an update to an existing counterpick for this GP
+        existing = await self.get_counterpick(grand_prix_id, league_id, picking_player_id)
+
+        # If no existing counterpick for this GP and no remaining counterpicks, reject
+        if not existing and remaining <= 0:
+            return False, f"You have used all your counterpicks for this season"
+
+        # Check if target already has 2 counterpicks
+        target_count = await self.get_target_counterpick_count(target_player_id, grand_prix_id, league_id)
+
+        # If updating existing counterpick to different target, don't count old one
+        if existing and existing.target_player_id != target_player_id:
+            if target_count >= 2:
+                return False, f"Target player already has the maximum of 2 counterpicks against them for this Grand Prix"
+        elif not existing and target_count >= 2:
+            return False, f"Target player already has the maximum of 2 counterpicks against them for this Grand Prix"
+
+        return True, "Counterpick allowed"
 
     async def delete_counterpick(
             self,
@@ -1311,6 +1542,29 @@ class PlayerRoundScoreRepository:
         query = "DELETE FROM player_round_scores WHERE player_id = %s AND league_id = %s AND grand_prix_id = %s"
         await self.db.execute_query(query, (player_id, league_id, grand_prix_id))
         return True
+
+    async def get_player_season_stats(self, player_id: int, league_id: int) -> Optional[Dict[str, Any]]:
+        """READ: Get player's season statistics for a league"""
+        query = """
+                SELECT COUNT(DISTINCT prs.grand_prix_id)  AS rounds_participated,
+                       COALESCE(SUM(prs.total_points), 0) AS total_points,
+                       COALESCE(MAX(prs.total_points), 0) AS best_round_score,
+                       COALESCE(MIN(prs.total_points), 0) AS worst_round_score,
+                       COALESCE(AVG(prs.total_points), 0) AS avg_points_per_round
+                FROM player_round_scores prs
+                WHERE prs.player_id = %s \
+                  AND prs.league_id = %s
+                """
+        row = await self.db.fetch_one(query, (player_id, league_id))
+        if row and row[0] > 0:  # Only return if player has participated in at least one round
+            return {
+                "rounds_participated": row[0],
+                "total_points": row[1],
+                "best_round_score": row[2],
+                "worst_round_score": row[3],
+                "avg_points_per_round": round(float(row[4]), 2)
+            }
+        return None
 
 
 class ScoringRuleRepository:
@@ -1534,6 +1788,251 @@ class LeaderboardRepository:
                 "rounds_played": row[4],
                 "rank": row[5],
                 "gap_to_next": row[6]
+            }
+            for row in rows
+        ]
+
+
+class StatisticsRepository:
+    """Handles all statistics queries"""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def get_most_drafted_driver_per_league(
+            self,
+            season_id: int,
+            league_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get the most drafted driver in a specific league for a season"""
+        query = """
+                SELECT driver_id, code, first_name, last_name, 
+                       total_times_drafted, unique_players_drafted_by
+                FROM v_driver_draft_stats
+                WHERE season_id = %s AND league_id = %s
+                ORDER BY total_times_drafted DESC, unique_players_drafted_by DESC
+                LIMIT 1
+                """
+        row = await self.db.fetch_one(query, (season_id, league_id))
+        if row:
+            return {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "total_times_drafted": row[4],
+                "unique_players_drafted_by": row[5]
+            }
+        return None
+
+    async def get_least_drafted_driver_per_league(
+            self,
+            season_id: int,
+            league_id: int,
+            min_drafts: int = 1
+    ) -> Optional[Dict[str, Any]]:
+        """Get the least drafted driver in a specific league for a season (excluding undrafted)"""
+        query = """
+                SELECT driver_id, code, first_name, last_name, 
+                       total_times_drafted, unique_players_drafted_by
+                FROM v_driver_draft_stats
+                WHERE season_id = %s AND league_id = %s AND total_times_drafted >= %s
+                ORDER BY total_times_drafted ASC, unique_players_drafted_by ASC
+                LIMIT 1
+                """
+        row = await self.db.fetch_one(query, (season_id, league_id, min_drafts))
+        if row:
+            return {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "total_times_drafted": row[4],
+                "unique_players_drafted_by": row[5]
+            }
+        return None
+
+    async def get_most_drafted_driver_across_all_leagues(
+            self,
+            season_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get the most drafted driver across all leagues in a season"""
+        query = """
+                SELECT driver_id, code, first_name, last_name, 
+                       total_times_drafted, unique_players_drafted_by, leagues_drafted_in
+                FROM v_driver_draft_stats_season
+                WHERE season_id = %s
+                ORDER BY total_times_drafted DESC, unique_players_drafted_by DESC
+                LIMIT 1
+                """
+        row = await self.db.fetch_one(query, (season_id,))
+        if row:
+            return {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "total_times_drafted": row[4],
+                "unique_players_drafted_by": row[5],
+                "leagues_drafted_in": row[6]
+            }
+        return None
+
+    async def get_least_drafted_driver_across_all_leagues(
+            self,
+            season_id: int,
+            min_drafts: int = 1
+    ) -> Optional[Dict[str, Any]]:
+        """Get the least drafted driver across all leagues in a season"""
+        query = """
+                SELECT driver_id, code, first_name, last_name, 
+                       total_times_drafted, unique_players_drafted_by, leagues_drafted_in
+                FROM v_driver_draft_stats_season
+                WHERE season_id = %s AND total_times_drafted >= %s
+                ORDER BY total_times_drafted ASC, unique_players_drafted_by ASC
+                LIMIT 1
+                """
+        row = await self.db.fetch_one(query, (season_id, min_drafts))
+        if row:
+            return {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "total_times_drafted": row[4],
+                "unique_players_drafted_by": row[5],
+                "leagues_drafted_in": row[6]
+            }
+        return None
+
+    async def get_driver_draft_count_by_player(
+            self,
+            player_id: int,
+            league_id: int,
+            season_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get how many times each driver was drafted by a specific player in a league"""
+        query = """
+                SELECT 
+                    d.id AS driver_id,
+                    d.code,
+                    d.first_name,
+                    d.last_name,
+                    COUNT(DISTINCT CASE 
+                        WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id OR dr.wildcard_id = d.id
+                        THEN dr.grand_prix_id 
+                    END) AS times_drafted,
+                    COUNT(DISTINCT CASE 
+                        WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id
+                        THEN dr.grand_prix_id 
+                    END) AS times_drafted_main,
+                    COUNT(DISTINCT CASE 
+                        WHEN dr.wildcard_id = d.id
+                        THEN dr.grand_prix_id 
+                    END) AS times_drafted_bogey
+                FROM drivers d
+                LEFT JOIN drafts dr ON (
+                    (dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id OR dr.wildcard_id = d.id)
+                    AND dr.player_id = %s
+                    AND dr.league_id = %s
+                )
+                WHERE d.season_id = %s
+                GROUP BY d.id, d.code, d.first_name, d.last_name
+                HAVING COUNT(DISTINCT CASE 
+                    WHEN dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id OR dr.wildcard_id = d.id
+                    THEN dr.grand_prix_id 
+                END) > 0
+                ORDER BY times_drafted DESC, d.last_name
+                """
+        rows = await self.db.fetch_all(query, (player_id, league_id, season_id))
+        return [
+            {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "times_drafted": row[4],
+                "times_drafted_main": row[5],
+                "times_drafted_bogey": row[6]
+            }
+            for row in rows
+        ]
+
+    async def get_driver_points_for_player(
+            self,
+            player_id: int,
+            league_id: int,
+            season_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get total points each driver scored for a player in a league over the season"""
+        query = """
+                SELECT 
+                    d.id AS driver_id,
+                    d.code,
+                    d.first_name,
+                    d.last_name,
+                    COUNT(DISTINCT dr.grand_prix_id) AS times_drafted,
+                    COALESCE(SUM(
+                        CASE 
+                            WHEN prs.breakdown_json ? d.code 
+                            THEN (prs.breakdown_json->d.code->>'points')::int
+                            ELSE 0
+                        END
+                    ), 0) AS total_points_scored
+                FROM drivers d
+                JOIN drafts dr ON (
+                    (dr.driver1_id = d.id OR dr.driver2_id = d.id OR dr.driver3_id = d.id OR dr.wildcard_id = d.id)
+                    AND dr.player_id = %s
+                    AND dr.league_id = %s
+                )
+                JOIN grands_prix gp ON gp.id = dr.grand_prix_id AND gp.is_completed = TRUE
+                LEFT JOIN player_round_scores prs ON (
+                    prs.player_id = dr.player_id 
+                    AND prs.league_id = dr.league_id 
+                    AND prs.grand_prix_id = dr.grand_prix_id
+                )
+                WHERE d.season_id = %s
+                GROUP BY d.id, d.code, d.first_name, d.last_name
+                ORDER BY total_points_scored DESC, times_drafted DESC
+                """
+        rows = await self.db.fetch_all(query, (player_id, league_id, season_id))
+        return [
+            {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "times_drafted": row[4],
+                "total_points_scored": row[5]
+            }
+            for row in rows
+        ]
+
+    async def get_all_driver_draft_stats_for_league(
+            self,
+            league_id: int,
+            season_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get draft statistics for all drivers in a league"""
+        query = """
+                SELECT driver_id, code, first_name, last_name,
+                       times_drafted_as_main, times_drafted_as_bogey,
+                       total_times_drafted, unique_players_drafted_by
+                FROM v_driver_draft_stats
+                WHERE league_id = %s AND season_id = %s
+                ORDER BY total_times_drafted DESC
+                """
+        rows = await self.db.fetch_all(query, (league_id, season_id))
+        return [
+            {
+                "driver_id": row[0],
+                "code": row[1],
+                "first_name": row[2],
+                "last_name": row[3],
+                "times_drafted_as_main": row[4],
+                "times_drafted_as_bogey": row[5],
+                "total_times_drafted": row[6],
+                "unique_players_drafted_by": row[7]
             }
             for row in rows
         ]

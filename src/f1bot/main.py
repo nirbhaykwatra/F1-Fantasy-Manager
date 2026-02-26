@@ -6,6 +6,8 @@ from discord import app_commands
 from config import load_config
 from f1bot.services.choiceservice import ChoiceService
 from f1bot.services.dbservice import DatabaseManager
+from f1bot.services.draftservice import DraftService
+from f1bot.services.embedservice import EmbedService
 
 async def main() -> None:
     config = load_config()
@@ -33,6 +35,8 @@ async def main() -> None:
         bot.db = DatabaseManager()
         await bot.db.initialize(config.database_url, min_size=2, max_size=10)
         bot.choiceService = ChoiceService(db=bot.db)
+        bot.draftService = DraftService(db_manager=bot.db)
+        bot.embedService = EmbedService()
         print(f"Services initialized.")
 
         # region Load extensions
