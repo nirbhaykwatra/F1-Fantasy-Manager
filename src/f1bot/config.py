@@ -39,8 +39,8 @@ def load_config() -> Config:
     db_user = os.getenv("SQLUSER")
     db_pass = os.getenv("SQLPASS")
     db_host = os.getenv("SQLHOST", "localhost")
-    db_name = os.getenv("SQLDB", "lvs_f1_fantasy")
-    database_url = f"postgresql+asyncpg://{db_user}:{db_pass}@{db_host}/{db_name}"
+    db_name = os.getenv("SQLDB", "f1fantasy")
+    database_url = f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}"
 
     return Config(
         token=token,

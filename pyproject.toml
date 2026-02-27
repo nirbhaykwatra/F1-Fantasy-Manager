@@ -10,4 +10,7 @@ dependencies = [
     "fastf1>=3.4",
     "alembic>=1.14",
     "python-dotenv",
+    "pip>=26.0.1",
+    "psycopg>=3.3.3",
+    "psycopg-pool>=3.3.0",
 ]

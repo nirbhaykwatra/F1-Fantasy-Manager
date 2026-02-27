@@ -135,7 +135,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-src/discord/.env
+src/f1bot/.env
 .envrc
 .venv
 env/

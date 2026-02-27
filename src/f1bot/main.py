@@ -1,22 +1,17 @@
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
-import pathlib
-from dotenv import load_dotenv
-import asyncio
-import logging
 
 from config import load_config
-
-# Run the bot. Note: This must be the last method to be called, owing to the fact that
-# it is blocking and will not execute anything after it.
+from f1bot.services.choiceservice import ChoiceService
+from f1bot.services.dbservice import DatabaseManager
+from f1bot.services.draftservice import DraftService
+from f1bot.services.embedservice import EmbedService
 
 async def main() -> None:
     config = load_config()
-
-    print(config.token)
-    # logger = logging.getLogger("bot")
+    # logger = logging.getLogger("f1bot")
 
     # Initialize intents
     intents = discord.Intents.none()
@@ -31,14 +26,19 @@ async def main() -> None:
     guild = discord.Object(id=config.guild_id)
     bot = commands.Bot(command_prefix="!", intents=intents)
 
-    # Attach shared services to bot so cogs can access them
-    bot.config = config  # type: ignore[attr-defined]
-    # bot.db = db          # type: ignore[attr-defined]
-
     # region Bot Event Handlers
 
     @bot.event
     async def setup_hook():
+        # Attach shared services to bot so cogs can access them
+        bot.config = config  # type: ignore[attr-defined]
+        bot.db = DatabaseManager()
+        await bot.db.initialize(config.database_url, min_size=2, max_size=10)
+        bot.choiceService = ChoiceService(db=bot.db)
+        bot.draftService = DraftService(db_manager=bot.db)
+        bot.embedService = EmbedService()
+        print(f"Services initialized.")
+
         # region Load extensions
         for command in config.cmds_dir.glob("*.py"):
             if command.name != '__init__.py':
@@ -48,6 +48,9 @@ async def main() -> None:
     @bot.event
     async def on_ready():
         print("Ready")
+        print(
+            f"Logged in as {bot.user} (ID: {bot.user.id}) / Connected to {len(bot.guilds)} guilds."
+        )
 
     @bot.event
     async def on_message(message):
@@ -98,7 +101,7 @@ async def main() -> None:
     # endregion
 
     try:
-        await bot.start(config.token)
+        await bot.start(config.token, reconnect=True)
     finally:
         pass
         # await db.close()
