@@ -9,7 +9,6 @@ class EmbedService:
     def __init__(self):
         pass
 
-    @staticmethod
     async def create_draft_success_embed(self, league_obj: League, grand_prix: GrandPrix, draft_info, player_obj: Player) -> discord.Embed:
         d1 = draft_info['driver1']
         d2 = draft_info['driver2']

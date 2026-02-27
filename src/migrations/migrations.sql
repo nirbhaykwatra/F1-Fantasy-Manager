@@ -713,12 +713,12 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION decrement_counterpick_usage IS 'Decrements counterpick usage when a counterpick is deleted';
 
--- Function to validate draft rules (3+ constructors, exhaustion, counterpicks)
+-- Function to validate draft rules (constructor diversity, counterpicks)
+-- NOTE: Exhaustion is now handled in application layer (DraftService)
 CREATE OR REPLACE FUNCTION validate_draft_rules()
 RETURNS TRIGGER AS $$
 DECLARE
     v_constructor_count INT;
-    v_exhausted_drivers INT[];
     v_counterpicked_driver_id INT;
     v_driver_ids INT[];
 BEGIN
@@ -735,20 +735,7 @@ BEGIN
         RAISE EXCEPTION 'Draft must include drivers from at least 3 different constructors. Found only % constructor(s).', v_constructor_count;
     END IF;
 
-    -- Rule 2: Check for exhausted drivers (used 2 GPs in a row)
-    SELECT ARRAY_AGG(driver_id)
-    INTO v_exhausted_drivers
-    FROM driver_exhaustion
-    WHERE player_id = NEW.player_id
-      AND league_id = NEW.league_id
-      AND is_exhausted = TRUE
-      AND driver_id = ANY(v_driver_ids);
-
-    IF v_exhausted_drivers IS NOT NULL AND array_length(v_exhausted_drivers, 1) > 0 THEN
-        RAISE EXCEPTION 'Cannot draft exhausted driver(s): %. These drivers were used in the previous 2 consecutive GPs.', v_exhausted_drivers;
-    END IF;
-
-    -- Rule 3: Check for counterpicked drivers
+    -- Rule 2: Check for counterpicked drivers
     SELECT target_driver_id
     INTO v_counterpicked_driver_id
     FROM counterpicks
@@ -766,7 +753,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION validate_draft_rules IS 'Validates draft rules: 3+ constructors, no exhausted drivers, no counterpicked drivers';
+COMMENT ON FUNCTION validate_draft_rules IS 'Validates draft rules: 3+ constructors, no counterpicked drivers (exhaustion checked in application layer)';
 
 -- Function to update driver exhaustion tracking after draft
 CREATE OR REPLACE FUNCTION update_driver_exhaustion()
@@ -951,15 +938,17 @@ CREATE TRIGGER trg_drafts_validate_rules_update
     )
     EXECUTE FUNCTION validate_draft_rules();
 
--- Update exhaustion tracking after successful draft
-CREATE TRIGGER trg_drafts_update_exhaustion
-    AFTER INSERT OR UPDATE ON drafts
-    FOR EACH ROW
-    EXECUTE FUNCTION update_driver_exhaustion();
+-- -- Update exhaustion tracking after successful draft
+-- CREATE TRIGGER trg_drafts_update_exhaustion
+--     AFTER INSERT OR UPDATE ON drafts
+--     FOR EACH ROW
+--     EXECUTE FUNCTION update_driver_exhaustion();
+-- REMOVED: trg_drafts_update_exhaustion trigger
+-- Exhaustion is now updated only when points are calculated
 
 COMMENT ON TRIGGER trg_drafts_validate_rules_insert ON drafts IS 'Validates all draft rules before insert';
 COMMENT ON TRIGGER trg_drafts_validate_rules_update ON drafts IS 'Validates all draft rules before update (when drivers change)';
-COMMENT ON TRIGGER trg_drafts_update_exhaustion ON drafts IS 'Updates driver exhaustion tracking after draft submission';
+--COMMENT ON TRIGGER trg_drafts_update_exhaustion ON drafts IS 'Updates driver exhaustion tracking after draft submission';
 
 COMMENT ON TRIGGER trg_counterpicks_validate_constraints ON counterpicks IS 'Validates counterpick limits before insert/update';
 COMMENT ON TRIGGER trg_counterpicks_track_usage_insert ON counterpicks IS 'Tracks counterpick usage after insert';

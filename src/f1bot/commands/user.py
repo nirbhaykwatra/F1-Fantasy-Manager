@@ -175,7 +175,7 @@ class FantasyUser(commands.Cog):
 
         try:
             # Get player
-            player = await self.player_repository.get_player_by_discord_id(interaction.user.id)
+            player: Player = await self.player_repository.get_player_by_discord_id(interaction.user.id)
             if not player:
                 await interaction.followup.send(embed=await self.embedService.create_draft_failure_embed("You are not registered. Please use /register to sign up first."), ephemeral=True)
                 return
@@ -247,7 +247,7 @@ class FantasyUser(commands.Cog):
                 await interaction.followup.send(embed=await self.embedService.create_draft_failure_embed("Failed to retrieve draft information."), ephemeral=True)
                 return
 
-            embed = await self.embedService.create_draft_success_embed(league_obj, grand_prix, draft_info, player)
+            embed = await self.embedService.create_draft_success_embed(league_obj=league_obj, grand_prix=grand_prix, draft_info=draft_info, player_obj=player)
 
             await interaction.followup.send(embed=embed, ephemeral=True)
 

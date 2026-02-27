@@ -1127,6 +1127,124 @@ class DriverExhaustionRepository:
         rows = await self.db.fetch_all(query, (player_id, league_id))
         return [DriverExhaustion(*row) for row in rows]
 
+    async def update_exhaustion_on_deadline(
+            self,
+            player_id: int,
+            league_id: int,
+            grand_prix_id: int
+    ) -> None:
+        """
+        Update driver exhaustion status after a draft deadline passes.
+        This should be called when points are calculated.
+
+        Args:
+            player_id: Player ID
+            league_id: League ID
+            grand_prix_id: Grand Prix ID (the one that just had its deadline pass)
+        """
+        query_get_draft = """
+                          SELECT driver1_id, driver2_id, driver3_id, wildcard_id
+                          FROM drafts
+                          WHERE player_id = %s \
+                            AND league_id = %s \
+                            AND grand_prix_id = %s \
+                          """
+        draft_row = await self.db.fetch_one(query_get_draft, (player_id, league_id, grand_prix_id))
+
+        if not draft_row:
+            return
+
+        driver_ids = [draft_row[0], draft_row[1], draft_row[2], draft_row[3]]
+
+        # Get current GP round number
+        query_gp = "SELECT round_number, season_id FROM grands_prix WHERE id = %s"
+        gp_row = await self.db.fetch_one(query_gp, (grand_prix_id,))
+        if not gp_row:
+            return
+
+        current_round = gp_row[0]
+        season_id = gp_row[1]
+
+        # Get previous GP for this league
+        query_prev_gp = """
+                        SELECT id, round_number
+                        FROM grands_prix
+                        WHERE season_id = %s \
+                          AND round_number = %s \
+                        """
+        prev_gp_row = await self.db.fetch_one(query_prev_gp, (season_id, current_round - 1))
+
+        if prev_gp_row:
+            prev_gp_id = prev_gp_row[0]
+
+            # Get previous draft
+            prev_draft_row = await self.db.fetch_one(query_get_draft, (player_id, league_id, prev_gp_id))
+
+            if prev_draft_row:
+                prev_driver_ids = [prev_draft_row[0], prev_draft_row[1], prev_draft_row[2], prev_draft_row[3]]
+
+                # Update exhaustion for each driver
+                for driver_id in driver_ids:
+                    if driver_id in prev_driver_ids:
+                        # Driver used in consecutive races - increment/mark exhausted
+                        query_upsert = """
+                                       INSERT INTO driver_exhaustion
+                                       (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, \
+                                        is_exhausted, updated_at)
+                                       VALUES (%s, %s, %s, %s, 2, TRUE, NOW()) ON CONFLICT (player_id, league_id, driver_id)
+                            DO \
+                                       UPDATE SET
+                                           consecutive_uses = driver_exhaustion.consecutive_uses + 1, \
+                                           is_exhausted = TRUE, \
+                                           last_grand_prix_id = EXCLUDED.last_grand_prix_id, \
+                                           updated_at = NOW() \
+                                       """
+                        await self.db.execute_query(query_upsert, (player_id, league_id, driver_id, grand_prix_id))
+                    else:
+                        # Driver NOT used consecutively - reset
+                        query_reset = """
+                                      INSERT INTO driver_exhaustion
+                                      (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, \
+                                       is_exhausted, updated_at)
+                                      VALUES (%s, %s, %s, %s, 1, FALSE, NOW()) ON CONFLICT (player_id, league_id, driver_id)
+                            DO \
+                                      UPDATE SET
+                                          consecutive_uses = 1, \
+                                          is_exhausted = FALSE, \
+                                          last_grand_prix_id = EXCLUDED.last_grand_prix_id, \
+                                          updated_at = NOW() \
+                                      """
+                        await self.db.execute_query(query_reset, (player_id, league_id, driver_id, grand_prix_id))
+
+                # Reset exhaustion for drivers NOT in current draft
+                query_reset_unused = """
+                                     UPDATE driver_exhaustion
+                                     SET consecutive_uses = 0,
+                                         is_exhausted     = FALSE,
+                                         updated_at       = NOW()
+                                     WHERE player_id = %s
+                                       AND league_id = %s
+                                       AND driver_id != ALL(%s)
+                                       AND is_exhausted = TRUE \
+                                     """
+                await self.db.execute_query(query_reset_unused, (player_id, league_id, driver_ids))
+        else:
+            # First GP - initialize exhaustion
+            for driver_id in driver_ids:
+                query_init = """
+                             INSERT INTO driver_exhaustion
+                             (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, is_exhausted, \
+                              updated_at)
+                             VALUES (%s, %s, %s, %s, 1, FALSE, NOW()) ON CONFLICT (player_id, league_id, driver_id)
+                    DO \
+                             UPDATE SET
+                                 consecutive_uses = 1, \
+                                 is_exhausted = FALSE, \
+                                 last_grand_prix_id = EXCLUDED.last_grand_prix_id, \
+                                 updated_at = NOW() \
+                             """
+                await self.db.execute_query(query_init, (player_id, league_id, driver_id, grand_prix_id))
+
 
 class CounterpickRepository:
     """Handles all database operations for counterpicks"""

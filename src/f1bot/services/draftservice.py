@@ -135,14 +135,15 @@ class DraftService:
             wildcard_id: int
     ) -> Tuple[bool, Optional[str], List[str]]:
         """
-        Validate that no exhausted drivers are being drafted
+        Validate that no exhausted drivers are being drafted.
+        Only checks drivers that are LOCKED IN (past their draft deadline).
 
         Returns:
             Tuple of (is_valid, error_message, list_of_exhausted_driver_names)
         """
         driver_ids = [driver1_id, driver2_id, driver3_id, wildcard_id]
 
-        # Get exhausted drivers for this player in this league
+        # Get exhausted drivers for this player in this league (from locked-in drafts only)
         exhausted_drivers = await self.exhaustion_repo.get_exhausted_drivers(player_id, league_id)
         exhausted_driver_ids = {ed.driver_id for ed in exhausted_drivers}
 
@@ -162,6 +163,84 @@ class DraftService:
                 f"These drivers were used in the previous 2 consecutive Grand Prix and must sit out this round."
             )
             return False, error_msg, driver_names
+
+        return True, None, []
+
+    async def validate_prospective_exhaustion(
+            self,
+            player_id: int,
+            league_id: int,
+            grand_prix_id: int,
+            driver1_id: int,
+            driver2_id: int,
+            driver3_id: int,
+            wildcard_id: int
+    ) -> Tuple[bool, Optional[str], List[str]]:
+        """
+        Validate that no driver is being drafted for more than 2 consecutive GPs in advance.
+        This checks prospective drafts (not yet locked in) to prevent illegal advance drafting.
+
+        Returns:
+            Tuple of (is_valid, error_message, list_of_violating_driver_names)
+        """
+        driver_ids = [driver1_id, driver2_id, driver3_id, wildcard_id]
+
+        # Get the current grand prix round number
+        current_gp = await self.grand_prix_repo.get_grand_prix_by_id(grand_prix_id)
+        if not current_gp:
+            return False, "Grand Prix not found", []
+
+        current_round = current_gp.round_number
+        season_id = current_gp.season_id
+
+        # Get all grands prix for the season, ordered by round
+        all_gps = await self.grand_prix_repo.list_grands_prix_by_season(season_id)
+        gp_map = {gp.round_number: gp for gp in all_gps}
+
+        # Get all existing drafts for this player in this league for the season
+        existing_drafts = await self.draft_repo.list_drafts_for_player_in_league(player_id, league_id)
+
+        # Build a map of round_number -> drafted_driver_ids
+        drafts_by_round = {}
+        for draft in existing_drafts:
+            gp = await self.grand_prix_repo.get_grand_prix_by_id(draft.grand_prix_id)
+            if gp and gp.season_id == season_id:
+                drafts_by_round[gp.round_number] = [
+                    draft.driver1_id,
+                    draft.driver2_id,
+                    draft.driver3_id,
+                    draft.wildcard_id
+                ]
+
+        # Add the current draft being validated
+        drafts_by_round[current_round] = driver_ids
+
+        # Check each driver for consecutive usage
+        violating_drivers = []
+        for driver_id in driver_ids:
+            consecutive_count = 0
+            max_consecutive = 0
+
+            # Scan through all rounds in order
+            for round_num in sorted(drafts_by_round.keys()):
+                if driver_id in drafts_by_round[round_num]:
+                    consecutive_count += 1
+                    max_consecutive = max(max_consecutive, consecutive_count)
+                else:
+                    consecutive_count = 0
+
+            # Check if this driver would be used more than 2 consecutive times
+            if max_consecutive > 2:
+                driver = await self.driver_repo.get_driver_by_id(driver_id)
+                if driver:
+                    violating_drivers.append(f"{driver.first_name} {driver.last_name}")
+
+        if violating_drivers:
+            error_msg = (
+                f"Cannot draft {', '.join(violating_drivers)} for more than 2 consecutive Grand Prix. "
+                f"You have already drafted them for 2 consecutive races."
+            )
+            return False, error_msg, violating_drivers
 
         return True, None, []
 
@@ -309,14 +388,22 @@ class DraftService:
             if not is_valid:
                 return None, error
 
-            # 5. Validate driver exhaustion
+            # 5. Validate LOCKED-IN driver exhaustion (from past deadlines)
             is_valid, error, _ = await self.validate_driver_exhaustion(
                 player_id, league_id, driver1_id, driver2_id, driver3_id, wildcard_id
             )
             if not is_valid:
                 return None, error
 
-            # 6. Validate counterpicks
+            # 6. Validate PROSPECTIVE exhaustion (no more than 2 consecutive in advance)
+            is_valid, error, _ = await self.validate_prospective_exhaustion(
+                player_id, league_id, grand_prix_id,
+                driver1_id, driver2_id, driver3_id, wildcard_id
+            )
+            if not is_valid:
+                return None, error
+
+            # 7. Validate counterpicks
             is_valid, error, _ = await self.validate_counterpicks(
                 player_id, league_id, grand_prix_id,
                 driver1_id, driver2_id, driver3_id, wildcard_id
