@@ -3,7 +3,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from config import load_config
+from src.f1bot.config import load_config
+
 from src.f1bot.services.choiceservice import ChoiceService
 from src.f1bot.services.dbservice import DatabaseManager
 from src.f1bot.services.draftservice import DraftService
