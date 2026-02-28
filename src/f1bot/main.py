@@ -92,7 +92,7 @@ async def main() -> None:
         for command in config.cmds_dir.glob("*.py"):
             if command.name != '__init__.py':
                 try:
-                    await bot.reload_extension(f'commands.{command.name[:-3]}')
+                    await bot.reload_extension(f'src.f1bot.commands.{command.name[:-3]}')
                 except Exception as e:
                     await ctx.send(f'Error reloading {command.name[:-3]}: {e}')
         await ctx.send(f'Extensions reloaded.')
