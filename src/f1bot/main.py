@@ -10,7 +10,6 @@ from src.f1bot.services.dbservice import DatabaseManager
 from src.f1bot.services.draftservice import DraftService
 from src.f1bot.services.embedservice import EmbedService
 
-
 async def main() -> None:
     config = load_config()
     # logger = logging.getLogger("f1bot")
