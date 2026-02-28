@@ -43,7 +43,7 @@ async def main() -> None:
         # region Load extensions
         for command in config.cmds_dir.glob("*.py"):
             if command.name != '__init__.py':
-                await bot.load_extension(f'commands.{command.name[:-3]}')
+                await bot.load_extension(f'src.f1bot.commands.{command.name[:-3]}')
         # endregion
 
     @bot.event
