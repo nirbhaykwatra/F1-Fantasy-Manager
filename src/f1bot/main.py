@@ -4,10 +4,12 @@ from discord.ext import commands
 from discord import app_commands
 
 from config import load_config
-from f1bot.services.choiceservice import ChoiceService
-from f1bot.services.dbservice import DatabaseManager
-from f1bot.services.draftservice import DraftService
-from f1bot.services.embedservice import EmbedService
+
+from src.f1bot.services.choiceservice import ChoiceService
+from src.f1bot.services.dbservice import DatabaseManager
+from src.f1bot.services.draftservice import DraftService
+from src.f1bot.services.embedservice import EmbedService
+
 
 async def main() -> None:
     config = load_config()
