@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 import discord
 import zoneinfo
@@ -341,6 +341,13 @@ class FantasyUser(commands.Cog):
 
                 # Get current draft if there's an active/upcoming GP
                 if next_gp:
+                    # Check if we should redact draft information
+                    should_redact = False
+                    if user is not None and next_gp.draft_deadline_utc:
+                        now = datetime.now(timezone.utc)
+                        if now <= next_gp.draft_deadline_utc:
+                            should_redact = True
+
                     current_draft: Optional[Draft] = await self.draft_repository.get_draft(
                         player_id=player.id,
                         league_id=league.id,
@@ -348,31 +355,39 @@ class FantasyUser(commands.Cog):
                     )
 
                     if current_draft:
-                        # Get driver names for the draft
-                        driver1 = await self.driver_repository.get_driver_by_id(current_draft.driver1_id)
-                        driver2 = await self.driver_repository.get_driver_by_id(current_draft.driver2_id)
-                        driver3 = await self.driver_repository.get_driver_by_id(current_draft.driver3_id)
-                        wildcard = await self.driver_repository.get_driver_by_id(current_draft.wildcard_id)
-                        constructor = await self.constructor_repository.get_constructor_by_id(
-                            current_draft.constructor_id)
+                        if should_redact:
+                            # Redact team information - deadline hasn't passed and viewing another user
+                            league_embed.add_field(
+                                name=f"**Round {next_gp.round_number}: {next_gp.event_name}**",
+                                value="🔒 Team information hidden until draft deadline",
+                                inline=False
+                            )
+                        else:
+                            # Get driver names for the draft
+                            driver1 = await self.driver_repository.get_driver_by_id(current_draft.driver1_id)
+                            driver2 = await self.driver_repository.get_driver_by_id(current_draft.driver2_id)
+                            driver3 = await self.driver_repository.get_driver_by_id(current_draft.driver3_id)
+                            wildcard = await self.driver_repository.get_driver_by_id(current_draft.wildcard_id)
+                            constructor = await self.constructor_repository.get_constructor_by_id(
+                                current_draft.constructor_id)
 
-                        league_embed.add_field(name=f"**Round {next_gp.round_number}: {next_gp.event_name}**", value="",
-                                               inline=False)
-                        if driver1:
-                            league_embed.add_field(name=f"{driver1.first_name} {driver1.last_name}", value=f"Driver 1",
-                                                   inline=True)
-                        if driver2:
-                            league_embed.add_field(name=f"{driver2.first_name} {driver2.last_name}", value=f"Driver 2",
-                                                   inline=True)
-                        if driver3:
-                            league_embed.add_field(name=f"{driver3.first_name} {driver3.last_name}", value=f"Driver 3",
-                                                   inline=True)
-                        if wildcard:
-                            league_embed.add_field(name=f"{wildcard.first_name} {wildcard.last_name}",
-                                                   value=f"🎲Bogey Driver🎲", inline=True)
-                        if constructor:
-                            league_embed.add_field(name=f"{constructor.full_name}", value=f"🏎️Constructor🏎️",
-                                                   inline=True)
+                            league_embed.add_field(name=f"**Round {next_gp.round_number}: {next_gp.event_name}**", value="",
+                                                   inline=False)
+                            if driver1:
+                                league_embed.add_field(name=f"{driver1.first_name} {driver1.last_name}", value=f"Driver 1",
+                                                       inline=True)
+                            if driver2:
+                                league_embed.add_field(name=f"{driver2.first_name} {driver2.last_name}", value=f"Driver 2",
+                                                       inline=True)
+                            if driver3:
+                                league_embed.add_field(name=f"{driver3.first_name} {driver3.last_name}", value=f"Driver 3",
+                                                       inline=True)
+                            if wildcard:
+                                league_embed.add_field(name=f"{wildcard.first_name} {wildcard.last_name}",
+                                                       value=f"🎲Bogey Driver🎲", inline=True)
+                            if constructor:
+                                league_embed.add_field(name=f"{constructor.full_name}", value=f"🏎️Constructor🏎️",
+                                                       inline=True)
                     else:
                         league_embed.add_field(
                             name="Current Draft",
@@ -496,6 +511,14 @@ class FantasyUser(commands.Cog):
 
             # Get and display CURRENT draft (next GP)
             if next_gp:
+                # Check if we should redact draft information
+                should_redact = False
+                if user is not None and next_gp.draft_deadline_utc:
+                    from datetime import datetime, timezone
+                    now = datetime.now(timezone.utc)
+                    if now <= next_gp.draft_deadline_utc:
+                        should_redact = True
+
                 current_draft: Optional[Draft] = await self.draft_repository.get_draft(
                     player_id=player.id,
                     league_id=league.id,
@@ -503,23 +526,31 @@ class FantasyUser(commands.Cog):
                 )
 
                 if current_draft:
-                    driver1 = await self.driver_repository.get_driver_by_id(current_draft.driver1_id)
-                    driver2 = await self.driver_repository.get_driver_by_id(current_draft.driver2_id)
-                    driver3 = await self.driver_repository.get_driver_by_id(current_draft.driver3_id)
-                    wildcard = await self.driver_repository.get_driver_by_id(current_draft.wildcard_id)
-                    constructor = await self.constructor_repository.get_constructor_by_id(current_draft.constructor_id)
+                    if should_redact:
+                        # Redact team information - deadline hasn't passed and viewing another user
+                        league_embed.add_field(
+                            name=f"**Round {next_gp.round_number}: {next_gp.event_name}**",
+                            value="🔒 Team information hidden until draft deadline",
+                            inline=False
+                        )
+                    else:
+                        driver1 = await self.driver_repository.get_driver_by_id(current_draft.driver1_id)
+                        driver2 = await self.driver_repository.get_driver_by_id(current_draft.driver2_id)
+                        driver3 = await self.driver_repository.get_driver_by_id(current_draft.driver3_id)
+                        wildcard = await self.driver_repository.get_driver_by_id(current_draft.wildcard_id)
+                        constructor = await self.constructor_repository.get_constructor_by_id(current_draft.constructor_id)
 
-                    league_embed.add_field(name=f"**Round {next_gp.round_number}: {next_gp.event_name}**", value="", inline=False)
-                    if driver1:
-                        league_embed.add_field(name=f"{driver1.first_name} {driver1.last_name}", value=f"Driver 1", inline=True)
-                    if driver2:
-                        league_embed.add_field(name=f"{driver2.first_name} {driver2.last_name}", value=f"Driver 2", inline=True)
-                    if driver3:
-                        league_embed.add_field(name=f"{driver3.first_name} {driver3.last_name}", value=f"Driver 3", inline=True)
-                    if wildcard:
-                        league_embed.add_field(name=f"{wildcard.first_name} {wildcard.last_name}", value=f"🎲Bogey Driver🎲", inline=True)
-                    if constructor:
-                        league_embed.add_field(name=f"{constructor.full_name}", value=f"🏎️Constructor🏎️", inline=True)
+                        league_embed.add_field(name=f"**Round {next_gp.round_number}: {next_gp.event_name}**", value="", inline=False)
+                        if driver1:
+                            league_embed.add_field(name=f"{driver1.first_name} {driver1.last_name}", value=f"Driver 1", inline=True)
+                        if driver2:
+                            league_embed.add_field(name=f"{driver2.first_name} {driver2.last_name}", value=f"Driver 2", inline=True)
+                        if driver3:
+                            league_embed.add_field(name=f"{driver3.first_name} {driver3.last_name}", value=f"Driver 3", inline=True)
+                        if wildcard:
+                            league_embed.add_field(name=f"{wildcard.first_name} {wildcard.last_name}", value=f"🎲Bogey Driver🎲", inline=True)
+                        if constructor:
+                            league_embed.add_field(name=f"{constructor.full_name}", value=f"🏎️Constructor🏎️", inline=True)
                 else:
                     league_embed.add_field(
                         name="Current Draft",
