@@ -46,8 +46,6 @@ async def main() -> None:
                 await bot.load_extension(f'src.f1bot.commands.{command.name[:-3]}')
         # endregion
 
-        bot.tree.default_permissions = None
-
     @bot.event
     async def on_ready():
         print("Ready")
