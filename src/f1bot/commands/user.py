@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 from typing import List, Optional
+from io import BytesIO
 import discord
 import zoneinfo
 import pytz
 from discord import app_commands
 from discord.ui import View, Button
 from discord.ext import commands
+from PIL import Image, ImageDraw, ImageFont
 from src.f1bot.config import load_config
 from src.f1bot.utils.logger import BotLogger
 from src.f1bot.services.models import (
@@ -1588,7 +1590,7 @@ class FantasyUser(commands.Cog):
 
     @app_commands.command(name='points', description='View the current points table for the selected league.')
     @app_commands.autocomplete(league=league_autocomplete)
-    @app_commands.describe(league='The grand prix you want to view')
+    @app_commands.describe(league='The league you want to view')
     @app_commands.guilds(discord.Object(id=config.guild_id))
     async def points(self, interaction: discord.Interaction, league: str):
         BotLogger.log_command_invocation(
@@ -1599,8 +1601,240 @@ class FantasyUser(commands.Cog):
             league=league
         )
 
-        BotLogger.log_command_error("points", interaction.user.name, NotImplementedError("Command not yet implemented"))
-        await interaction.response.send_message(f'This command has not been implemented.', ephemeral=True)
+        await interaction.response.defer()
+
+        try:
+            league_id = int(league)
+            league_obj = await self.league_repository.get_league_by_id(league_id)
+
+            if not league_obj:
+                BotLogger.log_command_error("points", interaction.user.name,
+                                            ValueError(f"League not found: {league_id}"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("League not found!"),
+                    ephemeral=True)
+                return
+
+            # Get all players in the league
+            players_in_league = await self.player_repository.list_players_in_league(league_id)
+
+            if not players_in_league:
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("No players found in this league!"),
+                    ephemeral=True)
+                return
+
+            # Get all GPs for the season
+            all_gps = await self.grand_prix_repository.list_grands_prix_by_season(league_obj.season_id)
+
+            if not all_gps:
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "No Grand Prix events found for this season!"),
+                    ephemeral=True)
+                return
+
+            # Find the most recent completed GP (for the title)
+            most_recent_completed_gp = None
+            for gp in all_gps:
+                if gp.is_completed:
+                    most_recent_completed_gp = gp
+
+            # Build player data with scores
+            player_data = []
+            for player in players_in_league:
+                player_league_info = await self.player_repository.get_player_league_info(player.id, league_id)
+
+                # Get scores for all GPs
+                gp_scores = {}
+                total = 0
+                for gp in all_gps:
+                    score = await self.player_round_score_repository.get_score(player.id, league_id, gp.id)
+                    if score:
+                        gp_scores[gp.id] = score.total_points
+                        total += score.total_points
+                    else:
+                        gp_scores[gp.id] = '-'
+
+                player_data.append({
+                    'player_name': player.username,
+                    'team_name': player_league_info.team_name if player_league_info and player_league_info.team_name else 'No Team Name',
+                    'gp_scores': gp_scores,
+                    'total': total
+                })
+
+            # Sort by total points (descending)
+            player_data.sort(key=lambda x: x['total'], reverse=True)
+
+            # Generate the image with the most recent completed GP
+            image = await self._generate_points_table_image(player_data, all_gps, league_obj, most_recent_completed_gp)
+
+            # Convert image to bytes
+            img_bytes = BytesIO()
+            image.save(img_bytes, format='PNG')
+            img_bytes.seek(0)
+
+            # Send as file
+            file = discord.File(img_bytes, filename='points_table.png')
+            await interaction.followup.send(file=file)
+
+            BotLogger.log_command_success("points", interaction.user.name,
+                                          f"Points table sent for league: {league_obj.name}")
+
+        except Exception as e:
+            BotLogger.log_command_error("points", interaction.user.name, e)
+            raise
+
+    async def _generate_points_table_image(self, player_data: List[dict], grand_prix_list: List,
+                                           league_obj, most_recent_gp=None) -> Image.Image:
+        """Generate a table image showing player standings with GP-by-GP scores"""
+
+        # Constants
+        TITLE_HEIGHT = 80
+        CELL_HEIGHT = 40
+        RANK_WIDTH = 60
+        PLAYER_WIDTH = 200
+        TEAM_WIDTH = 200
+        GP_WIDTH = 80
+        TOTAL_WIDTH = 100
+        HEADER_HEIGHT = 40
+        PADDING = 10
+
+        num_gps = len(grand_prix_list)
+        num_players = len(player_data)
+
+        # Calculate image dimensions
+        table_width = RANK_WIDTH + PLAYER_WIDTH + TEAM_WIDTH + (GP_WIDTH * num_gps) + TOTAL_WIDTH
+        table_height = TITLE_HEIGHT + HEADER_HEIGHT + (CELL_HEIGHT * num_players)
+
+        # Create image
+        img = Image.new('RGB', (table_width, table_height), color=(3,3,3))
+        draw = ImageDraw.Draw(img)
+
+        # Try to load a font, fallback to default if not available
+        try:
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/formulaone/f1-title.ttf", 24)
+            font_header = ImageFont.truetype("/usr/share/fonts/truetype/formulaone/f1-desc-bold.ttf", 16)
+            font_cell = ImageFont.truetype("/usr/share/fonts/truetype/formulaone/f1-desc-normal.ttf", 14)
+        except:
+            font_title = ImageFont.load_default()
+            font_header = ImageFont.load_default()
+            font_cell = ImageFont.load_default()
+
+        # Colors
+        title_bg = (20, 20, 20)  # Dark background for title
+        title_text = (255, 255, 255)
+        header_bg = (232, 39, 42)  # F1 red
+        header_text = (255, 255, 255)
+        alt_row_bg = (10, 10, 10)
+        grid_color = (3, 3, 3)
+        text_color = (255, 255, 255)
+
+        # Draw title section
+        draw.rectangle([0, 0, table_width, TITLE_HEIGHT], fill=title_bg)
+
+        # Determine title text
+        if most_recent_gp:
+            title_text_str = f"{league_obj.name} - After {most_recent_gp.event_name}"
+        else:
+            title_text_str = f"{league_obj.name} - Season Standings"
+
+        draw.text((table_width // 2, TITLE_HEIGHT // 2), title_text_str,
+                  fill=title_text, font=font_title, anchor="mm")
+
+        # Draw header row (now offset by TITLE_HEIGHT)
+        draw.rectangle([0, TITLE_HEIGHT, table_width, TITLE_HEIGHT + HEADER_HEIGHT], fill=header_bg)
+
+        x_offset = 0
+
+        # Header: Rank
+        draw.text((x_offset + RANK_WIDTH // 2, TITLE_HEIGHT + HEADER_HEIGHT // 2), "Rank",
+                  fill=header_text, font=font_header, anchor="mm")
+        x_offset += RANK_WIDTH
+
+        # Header: Player Name
+        draw.text((x_offset + PLAYER_WIDTH // 2, TITLE_HEIGHT + HEADER_HEIGHT // 2), "Player Name",
+                  fill=header_text, font=font_header, anchor="mm")
+        x_offset += PLAYER_WIDTH
+
+        # Header: Team Name
+        draw.text((x_offset + TEAM_WIDTH // 2, TITLE_HEIGHT + HEADER_HEIGHT // 2), "Team Name",
+                  fill=header_text, font=font_header, anchor="mm")
+        x_offset += TEAM_WIDTH
+
+        # Header: GP names (round numbers)
+        for gp in grand_prix_list:
+            draw.text((x_offset + GP_WIDTH // 2, TITLE_HEIGHT + HEADER_HEIGHT // 2), f"R{gp.round_number}",
+                      fill=header_text, font=font_header, anchor="mm")
+            x_offset += GP_WIDTH
+
+        # Header: Total
+        draw.text((x_offset + TOTAL_WIDTH // 2, TITLE_HEIGHT + HEADER_HEIGHT // 2), "Total",
+                  fill=header_text, font=font_header, anchor="mm")
+
+        # Draw data rows (now offset by TITLE_HEIGHT + HEADER_HEIGHT)
+        y_offset = TITLE_HEIGHT + HEADER_HEIGHT
+        for rank, player_info in enumerate(player_data, start=1):
+            # Alternate row background
+            if rank % 2 == 0:
+                draw.rectangle([0, y_offset, table_width, y_offset + CELL_HEIGHT], fill=alt_row_bg)
+
+            x_offset = 0
+
+            # Rank
+            draw.text((x_offset + RANK_WIDTH // 2, y_offset + CELL_HEIGHT // 2), str(rank),
+                      fill=text_color, font=font_cell, anchor="mm")
+            x_offset += RANK_WIDTH
+
+            # Player Name (truncate if too long)
+            player_name = player_info['player_name']
+            if len(player_name) > 20:
+                player_name = player_name[:17] + "..."
+            draw.text((x_offset + PADDING, y_offset + CELL_HEIGHT // 2), player_name,
+                      fill=text_color, font=font_cell, anchor="lm")
+            x_offset += PLAYER_WIDTH
+
+            # Team Name (truncate if too long)
+            team_name = player_info['team_name']
+            if len(team_name) > 20:
+                team_name = team_name[:17] + "..."
+            draw.text((x_offset + PADDING, y_offset + CELL_HEIGHT // 2), team_name,
+                      fill=text_color, font=font_cell, anchor="lm")
+            x_offset += TEAM_WIDTH
+
+            # GP scores
+            for gp in grand_prix_list:
+                score = player_info['gp_scores'].get(gp.id, '-')
+                score_text = str(score) if score != '-' else '-'
+                draw.text((x_offset + GP_WIDTH // 2, y_offset + CELL_HEIGHT // 2), score_text,
+                          fill=text_color, font=font_cell, anchor="mm")
+                x_offset += GP_WIDTH
+
+            # Total
+            draw.text((x_offset + TOTAL_WIDTH // 2, y_offset + CELL_HEIGHT // 2), str(player_info['total']),
+                      fill=text_color, font=font_cell, anchor="mm")
+
+            y_offset += CELL_HEIGHT
+
+        # Draw grid lines
+        # Vertical lines
+        x_offset = RANK_WIDTH
+        for i in range(num_gps + 3):  # Player, Team, GPs, Total
+            draw.line([x_offset, TITLE_HEIGHT, x_offset, table_height], fill=grid_color, width=1)
+            if i < 2:
+                x_offset += [PLAYER_WIDTH, TEAM_WIDTH][i]
+            elif i < num_gps + 2:
+                x_offset += GP_WIDTH
+            else:
+                x_offset += TOTAL_WIDTH
+
+        # Horizontal lines
+        y_offset = TITLE_HEIGHT + HEADER_HEIGHT
+        for i in range(num_players + 1):
+            draw.line([0, y_offset, table_width, y_offset], fill=grid_color, width=1)
+            y_offset += CELL_HEIGHT
+
+        return img
 
     @app_commands.describe(grand_prix='The grand prix you want to check deadlines for')
     @app_commands.autocomplete(grand_prix=grand_prix_autocomplete)
