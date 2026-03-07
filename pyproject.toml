@@ -13,4 +13,5 @@ dependencies = [
     "pip>=26.0.1",
     "psycopg>=3.3.3",
     "psycopg-pool>=3.3.0",
+    "pillow>=10.0.0",
 ]
