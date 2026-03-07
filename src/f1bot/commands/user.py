@@ -148,7 +148,6 @@ class FantasyUser(commands.Cog):
             BotLogger.log_command_error("register", interaction.user.name, e)
             raise
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='unregister', description='Unregister from a league!')
     @app_commands.autocomplete(league=league_autocomplete)
     @app_commands.describe(league='The league you want to unregister from')
@@ -210,7 +209,6 @@ class FantasyUser(commands.Cog):
             BotLogger.log_command_error("unregister", interaction.user.name, e)
             raise
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='draft', description='Draft your team for the selected round!')
     @app_commands.autocomplete(
         league=league_autocomplete,
@@ -512,7 +510,6 @@ class FantasyUser(commands.Cog):
             await interaction.followup.send(embed=await self.embedService.create_draft_failure_embed(
                 f"An unexpected error has occurred: {str(e)}."), ephemeral=True)
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='profile', description="View yours or another user's profile!")
     @app_commands.describe(user='The user you want to view. Leave blank to view your own profile.')
     @app_commands.guilds(discord.Object(id=config.guild_id))
@@ -733,7 +730,6 @@ class FantasyUser(commands.Cog):
             raise
 
     # For the following commands, try out using discord ui instead of simple embeds.
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='team', description='View your team.')
     @app_commands.autocomplete(grand_prix=grand_prix_autocomplete)
     @app_commands.describe(user='The user you want to view. Leave blank to view your own team.')
@@ -947,7 +943,6 @@ class FantasyUser(commands.Cog):
             BotLogger.log_command_error("team", interaction.user.name, e)
             raise
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='counterpick',
                           description='Counterpick another player for the selected round in your league.')
     @app_commands.autocomplete(league=league_autocomplete, driver=driver_autocomplete,
@@ -1213,7 +1208,6 @@ class FantasyUser(commands.Cog):
                 embed=await self.embedService.create_generic_failure_embed(f"An unexpected error occurred: {str(e)}"),
                 ephemeral=True)
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='cancel-counterpick', description='Cancel your counterpick for a specific Grand Prix.')
     @app_commands.autocomplete(league=league_autocomplete, grand_prix=grand_prix_autocomplete)
     @app_commands.describe(
@@ -1416,7 +1410,6 @@ class FantasyUser(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.guilds(discord.Object(id=config.guild_id))
     @app_commands.command(name='my-counterpicks', description='View your active counterpicks across all leagues.')
     async def my_counterpicks(self, interaction: discord.Interaction):
@@ -1576,7 +1569,6 @@ class FantasyUser(commands.Cog):
                 ephemeral=True
             )
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='grand-prix', description='View the details of a specific grand prix.')
     @app_commands.autocomplete(grand_prix=grand_prix_autocomplete)
     @app_commands.describe(grand_prix='The grand prix you want to view')
@@ -1594,7 +1586,6 @@ class FantasyUser(commands.Cog):
                                     NotImplementedError("Command not yet implemented"))
         await interaction.response.send_message(f'This command has not been implemented.', ephemeral=True)
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.command(name='points', description='View the current points table for the selected league.')
     @app_commands.autocomplete(league=league_autocomplete)
     @app_commands.describe(league='The grand prix you want to view')
@@ -1611,7 +1602,6 @@ class FantasyUser(commands.Cog):
         BotLogger.log_command_error("points", interaction.user.name, NotImplementedError("Command not yet implemented"))
         await interaction.response.send_message(f'This command has not been implemented.', ephemeral=True)
 
-    @app_commands.checks.has_any_role("Administrator", "F1 Fantasy Player")
     @app_commands.describe(grand_prix='The grand prix you want to check deadlines for')
     @app_commands.autocomplete(grand_prix=grand_prix_autocomplete)
     @app_commands.command(name='check-deadlines', description='Check all relevant deadlines.')
