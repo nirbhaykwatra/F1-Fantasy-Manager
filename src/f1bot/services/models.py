@@ -831,7 +831,7 @@ class PlayerRepository:
     async def list_leagues_for_player(self, player_id: int) -> List[League]:
         """READ: Get all leagues a player belongs to"""
         query = """
-                SELECT l.id, l.name, l.discord_guild_id, l.season_id, l.embed_color, l.created_at
+                SELECT l.id, l.name, l.discord_guild_id, l.season_id, l.embed_color, l.created_at, l.counterpick_limit
                 FROM leagues l
                 JOIN player_leagues pl ON pl.league_id = l.id
                 WHERE pl.player_id = %s
@@ -843,7 +843,7 @@ class PlayerRepository:
     async def get_leagues_for_player_by_discord_id(self, discord_user_id: int) -> List[League]:
         """READ: Get all leagues a player belongs to by their Discord ID"""
         query = """
-                SELECT l.id, l.name, l.discord_guild_id, l.season_id, l.embed_color, l.created_at
+                SELECT l.id, l.name, l.discord_guild_id, l.season_id, l.embed_color, l.created_at, l.counterpick_limit
                 FROM leagues l
                 JOIN player_leagues pl ON pl.league_id = l.id
                 JOIN players p ON p.id = pl.player_id
