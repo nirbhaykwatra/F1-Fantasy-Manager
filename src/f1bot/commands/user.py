@@ -1842,6 +1842,7 @@ class FantasyUser(commands.Cog):
         grand_prix="Select the Grand Prix"
     )
     @app_commands.autocomplete(league=league_autocomplete, grand_prix=grand_prix_autocomplete)
+    @app_commands.guilds(discord.Object(id=config.guild_id))
     async def points_breakdown(
             self,
             interaction: discord.Interaction,
