@@ -2,7 +2,7 @@
 // API endpoint to fetch drivers for a season
 
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import pool from '@/services/db';
 
 export async function GET(request: NextRequest) {
     try {

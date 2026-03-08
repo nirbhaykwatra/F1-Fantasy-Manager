@@ -1836,6 +1836,168 @@ class FantasyUser(commands.Cog):
 
         return img
 
+    @app_commands.command(name="points-breakdown", description="View detailed points breakdown for a Grand Prix")
+    @app_commands.describe(
+        league="Select the league",
+        grand_prix="Select the Grand Prix",
+        user="The user whose breakdown you want to view (leave blank for your own)"
+    )
+    @app_commands.autocomplete(league=league_autocomplete, grand_prix=grand_prix_autocomplete)
+    @app_commands.guilds(discord.Object(id=config.guild_id))
+    async def points_breakdown(
+            self,
+            interaction: discord.Interaction,
+            league: str,
+            grand_prix: str,
+            user: discord.User = None
+    ):
+        target_user = user if user else interaction.user
+
+        BotLogger.log_command_invocation(
+            command_name="points-breakdown",
+            user=interaction.user.name,
+            user_id=interaction.user.id,
+            league=league,
+            guild_id=interaction.guild.id,
+            target_user=target_user.name
+        )
+        """Display detailed points breakdown for a specific Grand Prix"""
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Get league
+            league_obj: League = await self.league_repository.get_league_by_id(int(league))
+            if not league_obj:
+                BotLogger.log_command_error("points_breakdown", interaction.user.name,
+                                            Exception(f"League not found for league ID: {league}"))
+                await interaction.followup.send("League not found.", ephemeral=True)
+                return
+
+            # Get Grand Prix
+            gp = await self.grand_prix_repository.get_grand_prix_by_id(int(grand_prix))
+            if not gp:
+                BotLogger.log_command_error("points_breakdown", interaction.user.name,
+                                            Exception(f"Grand Prix not found for Grand Prix ID: {grand_prix}"))
+                await interaction.followup.send("Grand Prix not found.", ephemeral=True)
+                return
+
+            # Get player from Discord user (target user, not necessarily the command invoker)
+            player_obj = await self.player_repository.get_player_by_discord_id(target_user.id)
+            if not player_obj:
+                BotLogger.log_command_error("points_breakdown", interaction.user.name,
+                                            Exception(f"Player not found for Discord ID: {target_user.id}"))
+                if user is None:
+                    await interaction.followup.send("You are not registered. Use `/register` first.", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"{target_user.display_name} is not registered.", ephemeral=True)
+                return
+
+            # Check if player is in this league
+            is_in_league = await self.player_repository.is_player_in_league(player_obj.id, league_obj.id)
+            if not is_in_league:
+                BotLogger.log_command_error("points_breakdown", interaction.user.name,
+                                            Exception(f"Player not found in league: {league_obj.name}"))
+                if user is None:
+                    await interaction.followup.send(f"You are not a member of **{league_obj.name}**.", ephemeral=True)
+                else:
+                    await interaction.followup.send(
+                        f"{target_user.display_name} is not a member of **{league_obj.name}**.", ephemeral=True)
+                return
+
+            # Get player's score for this GP
+            score = await self.player_round_score_repository.get_score(player_obj.id, league_obj.id, gp.id)
+            if not score:
+                BotLogger.log_command_error("points_breakdown", interaction.user.name, Exception(
+                    f"No score found for player {player_obj.name} in league {league_obj.name} for GP {gp.event_name}"))
+                await interaction.followup.send(
+                    f"No points data found for **{target_user.display_name}** in **{gp.event_name}** for **{league_obj.name}**.\n"
+                    f"Points are calculated after the race is completed.",
+                    ephemeral=True
+                )
+                return
+
+            # Create embed with breakdown
+            embed = await self._create_points_breakdown_embed(
+                player_obj, league_obj, gp, score
+            )
+
+            BotLogger.log_command_success("points_breakdown", interaction.user.name,
+                                          f"Points breakdown displayed for {player_obj.username} in {league_obj.name} for {gp.event_name}")
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            BotLogger.log_command_error("points_breakdown", interaction.user.name,
+                                        Exception(f"Error displaying points breakdown: {e}"))
+            await interaction.followup.send("An error occurred while retrieving the points breakdown.", ephemeral=True)
+
+    async def _create_points_breakdown_embed(
+            self,
+            player_obj: Player,
+            league_obj: League,
+            grand_prix,
+            score
+    ) -> discord.Embed:
+        """Create a formatted embed showing the points breakdown"""
+        breakdown = score.breakdown_json
+
+        # Create embed
+        embed = discord.Embed(
+            title=f"Points Breakdown - {grand_prix.event_name}",
+            description=f"**Total Points: {breakdown.get('total', 0)}**",
+            color=league_obj.embed_color,
+            timestamp=score.calculated_at
+        )
+
+        # Driver 1
+        if 'driver1' in breakdown:
+            d1 = breakdown['driver1']
+            embed.add_field(
+                name=f"🏎️ Driver 1: {d1['name']}",
+                value=f"**{d1['points']} points**\n{d1['details']}",
+                inline=False
+            )
+
+        # Driver 2
+        if 'driver2' in breakdown:
+            d2 = breakdown['driver2']
+            embed.add_field(
+                name=f"🏎️ Driver 2: {d2['name']}",
+                value=f"**{d2['points']} points**\n{d2['details']}",
+                inline=False
+            )
+
+        # Driver 3
+        if 'driver3' in breakdown:
+            d3 = breakdown['driver3']
+            embed.add_field(
+                name=f"🏎️ Driver 3: {d3['name']}",
+                value=f"**{d3['points']} points**\n{d3['details']}",
+                inline=False
+            )
+
+        # Wildcard (Bogey Driver)
+        if 'wildcard' in breakdown:
+            wc = breakdown['wildcard']
+            embed.add_field(
+                name=f"🎲 Bogey Driver: {wc['name']}",
+                value=f"**{wc['points']} points**\n{wc['details']}",
+                inline=False
+            )
+
+        # Constructor
+        if 'constructor' in breakdown:
+            cons = breakdown['constructor']
+            embed.add_field(
+                name=f"🏁 Constructor: {cons['name']}",
+                value=f"**{cons['points']} points**\n{cons['details']}",
+                inline=False
+            )
+
+        # Set footer
+        embed.set_footer(text=f"{player_obj.username} • {league_obj.name}")
+
+        return embed
+
     @app_commands.describe(grand_prix='The grand prix you want to check deadlines for')
     @app_commands.autocomplete(grand_prix=grand_prix_autocomplete)
     @app_commands.command(name='check-deadlines', description='Check all relevant deadlines.')

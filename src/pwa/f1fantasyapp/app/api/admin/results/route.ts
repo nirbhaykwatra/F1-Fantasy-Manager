@@ -2,57 +2,58 @@
 // API endpoint to submit race results and calculate points
 
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-import scoringService from '@/lib/scoring';
+import pool from '@/services/db';
+import scoringService from '@/services/scoring';
 
-// Define the structure of the request body
 interface ResultEntry {
     driver_id: number;
     position: number;
 }
 
-interface SubmitResultsRequest {
-    grand_prix_id: number;
-    league_id: number;
+interface SessionPayload {
     session_type: 'qualifying' | 'race' | 'sprint' | 'sprint_qualifying';
     results: ResultEntry[];
 }
 
-// POST endpoint - called when admin submits results
+interface SubmitResultsRequest {
+    grand_prix_id: number;
+    league_id: number;
+    sessions: SessionPayload[];
+}
+
 export async function POST(request: NextRequest) {
     try {
-        // Parse the JSON body from the request
         const body: SubmitResultsRequest = await request.json();
-        const { grand_prix_id, league_id, session_type, results } = body;
+        const { grand_prix_id, league_id, sessions } = body;
 
-        // Validate required fields
-        if (!grand_prix_id || !league_id || !session_type || !results) {
+        if (!grand_prix_id || !league_id || !sessions || sessions.length === 0) {
             return NextResponse.json(
                 { error: 'Missing required fields' },
                 { status: 400 } as ResponseInit
             );
         }
 
-        // Start database transaction
         const client = await pool.connect();
 
         try {
             await client.query('BEGIN');
 
-            // Insert or update each result in the race_results table
-            for (const result of results) {
-                await client.query(
-                    `INSERT INTO race_results (grand_prix_id, session_type, driver_id, position)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (grand_prix_id, session_type, driver_id)
-           DO UPDATE SET position = $4`,
-                    [grand_prix_id, session_type, result.driver_id, result.position]
-                );
+            // Insert/update results for every submitted session in a single transaction
+            for (const { session_type, results } of sessions) {
+                for (const result of results) {
+                    await client.query(
+                        `INSERT INTO race_results (grand_prix_id, session_type, driver_id, position)
+                         VALUES ($1, $2, $3, $4)
+                         ON CONFLICT (grand_prix_id, session_type, driver_id)
+                         DO UPDATE SET position = $4`,
+                        [grand_prix_id, session_type, result.driver_id, result.position]
+                    );
+                }
             }
 
             await client.query('COMMIT');
 
-            // After storing results, calculate points for all players
+            // Calculate points once all sessions are stored
             await scoringService.calculatePointsForGrandPrix(grand_prix_id, league_id);
 
             return NextResponse.json({
@@ -89,20 +90,20 @@ export async function GET(request: NextRequest) {
         }
 
         let query = `
-      SELECT 
-        rr.id,
-        rr.driver_id,
-        rr.position,
-        rr.session_type,
-        d.first_name,
-        d.last_name,
-        d.code,
-        c.short_name as constructor
-      FROM race_results rr
-      JOIN drivers d ON d.id = rr.driver_id
-      JOIN constructors c ON c.id = d.constructor_id
-      WHERE rr.grand_prix_id = $1
-    `;
+            SELECT
+                rr.id,
+                rr.driver_id,
+                rr.position,
+                rr.session_type,
+                d.first_name,
+                d.last_name,
+                d.code,
+                c.short_name as constructor
+            FROM race_results rr
+                     JOIN drivers d ON d.id = rr.driver_id
+                     JOIN constructors c ON c.id = d.constructor_id
+            WHERE rr.grand_prix_id = $1
+        `;
 
         const params: any[] = [grandPrixId];
 
