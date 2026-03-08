@@ -1854,10 +1854,11 @@ class FantasyUser(commands.Cog):
             command_name="points-breakdown",
             user=interaction.user.name,
             user_id=interaction.user.id,
-            league=league
+            league=league,
+            guild_id=interaction.guild.id
         )
         """Display detailed points breakdown for a specific Grand Prix"""
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         try:
             # Get league
