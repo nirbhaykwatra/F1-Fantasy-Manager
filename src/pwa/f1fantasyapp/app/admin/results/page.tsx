@@ -1,3 +1,4 @@
+
 // app/admin/results/page.tsx
 // Admin interface for entering race results
 
@@ -29,74 +30,94 @@ interface ResultEntry {
     driver_id: number | null;
 }
 
+// Results keyed by session type
+type SessionResults = Record<string, ResultEntry[]>;
+
+const SESSION_TYPES = ['race', 'qualifying', 'sprint', 'sprint_qualifying'] as const;
+type SessionType = typeof SESSION_TYPES[number];
+
+function createEmptyResults(): ResultEntry[] {
+    return Array.from({ length: 22 }, (_, i) => ({ position: i + 1, driver_id: null }));
+}
+
 export default function AdminResultsPage() {
-    // React state variables - these hold the component's data
-    const [seasonId] = useState(1); // Hardcoded for now - you can make this dynamic
-    const [leagueId] = useState(1); // Hardcoded for now
+    const [seasonId] = useState(1);
+    const [leagueId] = useState(1);
     const [grandsPrix, setGrandsPrix] = useState<GrandPrix[]>([]);
     const [drivers, setDrivers] = useState<Driver[]>([]);
     const [selectedGP, setSelectedGP] = useState<number | null>(null);
-    const [sessionType, setSessionType] = useState<string>('race');
-    const [results, setResults] = useState<ResultEntry[]>([]);
+    // Which sessions are enabled
+    const [enabledSessions, setEnabledSessions] = useState<Record<SessionType, boolean>>({
+        race: true,
+        qualifying: true,
+        sprint: false,
+        sprint_qualifying: false,
+    });
+    // Active tab for display
+    const [activeTab, setActiveTab] = useState<SessionType>('race');
+    // Results per session
+    const [sessionResults, setSessionResults] = useState<SessionResults>({
+        race: createEmptyResults(),
+        qualifying: createEmptyResults(),
+        sprint: createEmptyResults(),
+        sprint_qualifying: createEmptyResults(),
+    });
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-    // useEffect runs when the component first loads
     useEffect(() => {
         fetchGrandsPrix();
         fetchDrivers();
     }, []);
 
-    // Fetch the list of Grand Prix events
     const fetchGrandsPrix = async () => {
         try {
             const response = await fetch(`/api/admin/grands-prix?season_id=${seasonId}`);
             const data = await response.json();
-
-            if (data.success) {
-                setGrandsPrix(data.grands_prix);
-            }
+            if (data.success) setGrandsPrix(data.grands_prix);
         } catch (error) {
             console.error('Error fetching GPs:', error);
             setMessage({ type: 'error', text: 'Failed to load Grand Prix events' });
         }
     };
 
-    // Fetch the list of drivers
     const fetchDrivers = async () => {
         try {
             const response = await fetch(`/api/admin/drivers?season_id=${seasonId}`);
             const data = await response.json();
-
-            if (data.success) {
-                setDrivers(data.drivers);
-                // Initialize results with 22 positions, no drivers assigned yet
-                setResults(Array.from({ length: 22 }, (_, i) => ({
-                    position: i + 1,
-                    driver_id: null
-                })));
-            }
+            if (data.success) setDrivers(data.drivers);
         } catch (error) {
             console.error('Error fetching drivers:', error);
             setMessage({ type: 'error', text: 'Failed to load drivers' });
         }
     };
 
-    // Assign a driver to a specific position
-    const assignDriverToPosition = (position: number, driverId: number | null) => {
-        setResults(prev =>
-            prev.map(r =>
-                r.position === position ? { ...r, driver_id: driverId } : r
-            )
-        );
+    const toggleSession = (session: SessionType) => {
+        setEnabledSessions(prev => ({ ...prev, [session]: !prev[session] }));
+        // If enabling, switch to that tab
+        if (!enabledSessions[session]) setActiveTab(session);
     };
 
-    // Submit the results to the API
+    const assignDriverToPosition = (session: SessionType, position: number, driverId: number | null) => {
+        setSessionResults(prev => ({
+            ...prev,
+            [session]: prev[session].map(r =>
+                r.position === position ? { ...r, driver_id: driverId } : r
+            ),
+        }));
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault(); // Prevent page reload
+        e.preventDefault();
 
         if (!selectedGP) {
             setMessage({ type: 'error', text: 'Please select a Grand Prix' });
+            return;
+        }
+
+        const activeSessions = SESSION_TYPES.filter(s => enabledSessions[s]);
+        if (activeSessions.length === 0) {
+            setMessage({ type: 'error', text: 'Please enable at least one session' });
             return;
         }
 
@@ -104,15 +125,19 @@ export default function AdminResultsPage() {
         setMessage(null);
 
         try {
+            const sessions = activeSessions.map(session => ({
+                session_type: session,
+                results: sessionResults[session].filter(r => r.driver_id !== null),
+            }));
+
             const response = await fetch('/api/admin/results', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     grand_prix_id: selectedGP,
                     league_id: leagueId,
-                    session_type: sessionType,
-                    results: results.filter(r => r.position > 0) // Only send drivers with positions
-                })
+                    sessions,
+                }),
             });
 
             const data = await response.json();
@@ -130,6 +155,8 @@ export default function AdminResultsPage() {
         }
     };
 
+    const activeSessionList = SESSION_TYPES.filter(s => enabledSessions[s]);
+
     return (
         <div className="min-h-screen bg-gray-50 p-8">
             <div className="max-w-6xl mx-auto">
@@ -137,7 +164,6 @@ export default function AdminResultsPage() {
                     🏁 Admin: Enter Race Results
                 </h1>
 
-                {/* Message banner */}
                 {message && (
                     <div
                         className={`mb-6 p-4 rounded-lg ${
@@ -172,80 +198,112 @@ export default function AdminResultsPage() {
                         </select>
                     </div>
 
-                    {/* Session Type Selection */}
+                    {/* Session Toggles */}
                     <div className="mb-6">
                         <label className="block text-sm font-medium text-gray-900 mb-2">
-                            Session Type
+                            Sessions to Submit
                         </label>
-                        <div className="flex gap-4">
-                            {['race', 'qualifying', 'sprint', 'sprint_qualifying'].map((type) => (
-                                <label key={type} className="inline-flex items-center">
+                        <div className="flex flex-wrap gap-3">
+                            {SESSION_TYPES.map((type) => (
+                                <label key={type} className="inline-flex items-center gap-2 cursor-pointer">
                                     <input
-                                        type="radio"
-                                        name="sessionType"
-                                        value={type}
-                                        checked={sessionType === type}
-                                        onChange={(e) => setSessionType(e.target.value)}
-                                        className="form-radio text-red-600"
+                                        type="checkbox"
+                                        checked={enabledSessions[type]}
+                                        onChange={() => toggleSession(type)}
+                                        className="w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500"
                                     />
-                                    <span className="ml-2 capitalize text-gray-900">
-                    {type.replace('_', ' ')}
-                  </span>
+                                    <span className="capitalize text-gray-900">
+                                        {type.replace('_', ' ')}
+                                    </span>
                                 </label>
                             ))}
                         </div>
                     </div>
 
-                    {/* Results Entry Grid */}
-                    <div className="mb-6">
-                        <h2 className="text-lg font-semibold mb-4 text-gray-900">
-                            Assign Drivers to Finishing Positions
-                        </h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {results.map((result) => (
-                                <div
-                                    key={result.position}
-                                    className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:border-gray-300"
-                                >
-                                    <div className="flex items-center justify-center w-10 h-10 bg-gray-900 text-white font-bold rounded">
-                                        P{result.position}
-                                    </div>
-                                    <select
-                                        value={result.driver_id || ''}
-                                        onChange={(e) => assignDriverToPosition(
-                                            result.position,
-                                            e.target.value ? Number(e.target.value) : null
-                                        )}
-                                        className="flex-1 px-3 py-2 text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                    {/* Session Tabs + Results Grid */}
+                    {activeSessionList.length > 0 ? (
+                        <div className="mb-6">
+                            {/* Tab bar */}
+                            <div className="flex border-b border-gray-200 mb-4">
+                                {activeSessionList.map((session) => (
+                                    <button
+                                        key={session}
+                                        type="button"
+                                        onClick={() => setActiveTab(session)}
+                                        className={`px-5 py-2 text-sm font-medium capitalize transition-colors ${
+                                            activeTab === session
+                                                ? 'border-b-2 border-red-600 text-red-600'
+                                                : 'text-gray-500 hover:text-gray-800'
+                                        }`}
                                     >
-                                        <option value="">Select driver...</option>
-                                        {drivers.map((driver) => (
-                                            <option
-                                                key={driver.id}
-                                                value={driver.id}
-                                                disabled={results.some(r => r.driver_id === driver.id && r.position !== result.position)}
+                                        {session.replace('_', ' ')}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Active tab results grid */}
+                            {activeSessionList.includes(activeTab) && (
+                                <div>
+                                    <h2 className="text-lg font-semibold mb-4 text-gray-900 capitalize">
+                                        {activeTab.replace('_', ' ')} — Assign Drivers to Finishing Positions
+                                    </h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {sessionResults[activeTab].map((result) => (
+                                            <div
+                                                key={result.position}
+                                                className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:border-gray-300"
                                             >
-                                                {driver.first_name} {driver.last_name} (#{driver.number})
-                                            </option>
+                                                <div className="flex items-center justify-center w-10 h-10 bg-gray-900 text-white font-bold rounded">
+                                                    P{result.position}
+                                                </div>
+                                                <select
+                                                    value={result.driver_id || ''}
+                                                    onChange={(e) => assignDriverToPosition(
+                                                        activeTab,
+                                                        result.position,
+                                                        e.target.value ? Number(e.target.value) : null
+                                                    )}
+                                                    className="flex-1 px-3 py-2 text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                                                >
+                                                    <option value="">Select driver...</option>
+                                                    {drivers.map((driver) => (
+                                                        <option
+                                                            key={driver.id}
+                                                            value={driver.id}
+                                                            disabled={sessionResults[activeTab].some(
+                                                                r => r.driver_id === driver.id && r.position !== result.position
+                                                            )}
+                                                        >
+                                                            {driver.first_name} {driver.last_name} (#{driver.number})
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
                                         ))}
-                                    </select>
+                                    </div>
                                 </div>
-                            ))}
+                            )}
                         </div>
-                    </div>
+                    ) : (
+                        <p className="mb-6 text-gray-500 italic">
+                            Enable at least one session above to enter results.
+                        </p>
+                    )}
 
                     {/* Submit Button */}
                     <div className="flex justify-end">
                         <button
                             type="submit"
-                            disabled={loading || !selectedGP}
+                            disabled={loading || !selectedGP || activeSessionList.length === 0}
                             className={`px-6 py-3 rounded-lg font-semibold text-white transition-colors ${
-                                loading || !selectedGP
+                                loading || !selectedGP || activeSessionList.length === 0
                                     ? 'bg-gray-400 cursor-not-allowed'
                                     : 'bg-red-600 hover:bg-red-700'
                             }`}
                         >
-                            {loading ? 'Processing...' : 'Submit Results & Calculate Points'}
+                            {loading
+                                ? 'Processing...'
+                                : `Submit ${activeSessionList.length} Session${activeSessionList.length > 1 ? 's' : ''} & Calculate Points`}
                         </button>
                     </div>
                 </form>
@@ -256,10 +314,10 @@ export default function AdminResultsPage() {
                         📝 How It Works
                     </h3>
                     <ul className="list-disc list-inside space-y-1 text-blue-800 text-sm">
-                        <li>Select the Grand Prix and session type</li>
-                        <li>Enter the finishing position for each driver</li>
-                        <li>Click Submit to store results and calculate player points</li>
-                        <li>Points are automatically calculated based on scoring rules</li>
+                        <li>Select the Grand Prix, then tick the sessions you want to submit</li>
+                        <li>Use the tabs to enter finishing positions for each session</li>
+                        <li>Click Submit to store all session results and calculate player points in one go</li>
+                        <li>Points are automatically calculated across all submitted sessions</li>
                         <li>Driver exhaustion status is updated for the next round</li>
                     </ul>
                 </div>
