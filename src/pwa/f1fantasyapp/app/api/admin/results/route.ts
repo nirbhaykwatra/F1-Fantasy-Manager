@@ -2,8 +2,8 @@
 // API endpoint to submit race results and calculate points
 
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-import scoringService from '@/lib/scoring';
+import pool from '@/services/db';
+import scoringService from '@/services/scoring';
 
 interface ResultEntry {
     driver_id: number;

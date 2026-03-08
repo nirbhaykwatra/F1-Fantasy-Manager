@@ -2,7 +2,7 @@
 // API endpoint to fetch Grand Prix events
 
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import pool from '@/services/db';
 
 // GET endpoint - fetch all GPs for a season
 export async function GET(request: NextRequest) {
