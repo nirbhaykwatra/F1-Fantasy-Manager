@@ -1,5 +1,5 @@
 import discord
-from src.f1bot.services.models import (
+from f1bot.services.models import (
     League,
     GrandPrix,
     Player

@@ -1,4 +1,3 @@
-import psycopg
 from psycopg_pool import AsyncConnectionPool
 from typing import Optional
 import logging

@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 import json
 
-from src.f1bot.services.f1service import JolpicaF1Service
-from src.f1bot.services.models import (
+from f1bot.services.f1service import JolpicaF1Service
+from f1bot.services.models import (
     Driver,
     Constructor,
     GrandPrix,
