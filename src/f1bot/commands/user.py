@@ -716,48 +716,48 @@ class FantasyUser(commands.Cog):
                     )
                     reminder_results.append((player.username, "❌ Failed", "Discord user not found"))
 
-                # Build per-player paginated summary for the admin
-                reminded_count = sum(1 for _, status, _ in reminder_results if status == "📨 Reminded")
+            # Build per-player paginated summary for the admin
+            reminded_count = sum(1 for _, status, _ in reminder_results if status == "📨 Reminded")
 
-                FIELDS_PER_PAGE = 24  # Reserve 1 field for the totals line on each page
-                description = f"**{grand_prix.event_name}** • **{league_obj.name}**\n{reminded_count} reminder(s) sent."
+            FIELDS_PER_PAGE = 24  # Reserve 1 field for the totals line on each page
+            description = f"**{grand_prix.event_name}** • **{league_obj.name}**\n{reminded_count} reminder(s) sent."
 
-                # Split reminder_results into pages
-                chunks = [reminder_results[i:i + FIELDS_PER_PAGE] for i in
-                          range(0, len(reminder_results), FIELDS_PER_PAGE)]
-                if not chunks:
-                    chunks = [[]]
+            # Split reminder_results into pages
+            chunks = [reminder_results[i:i + FIELDS_PER_PAGE] for i in
+                      range(0, len(reminder_results), FIELDS_PER_PAGE)]
+            if not chunks:
+                chunks = [[]]
 
-                summary_embeds = []
-                for chunk in chunks:
-                    embed = discord.Embed(
-                        title="Draft Reminder Summary",
-                        description=description,
-                        color=league_obj.embed_color
-                    )
-                    for username, status, reason in chunk:
-                        embed.add_field(
-                            name=f"{status} {username}",
-                            value=reason,
-                            inline=False
-                        )
-                    summary_embeds.append(embed)
-
-                BotLogger.log_command_success(
-                    "send-draft-reminder",
-                    interaction.user.name,
-                    f"Sent {reminded_count} draft reminder(s) for {grand_prix.event_name} in {league_obj.name}"
+            summary_embeds = []
+            for chunk in chunks:
+                embed = discord.Embed(
+                    title="Draft Reminder Summary",
+                    description=description,
+                    color=league_obj.embed_color
                 )
-
-                if len(summary_embeds) == 1:
-                    summary_embeds[0].set_footer(
-                        text=f"Requested by {interaction.user.display_name}",
-                        icon_url=interaction.user.display_avatar.url
+                for username, status, reason in chunk:
+                    embed.add_field(
+                        name=f"{status} {username}",
+                        value=reason,
+                        inline=False
                     )
-                    await interaction.followup.send(embed=summary_embeds[0], ephemeral=True)
-                else:
-                    view = DraftReminderSummaryPaginationView(summary_embeds, interaction.user)
-                    await interaction.followup.send(embed=summary_embeds[0], view=view, ephemeral=True)
+                summary_embeds.append(embed)
+
+            BotLogger.log_command_success(
+                "send-draft-reminder",
+                interaction.user.name,
+                f"Sent {reminded_count} draft reminder(s) for {grand_prix.event_name} in {league_obj.name}"
+            )
+
+            if len(summary_embeds) == 1:
+                summary_embeds[0].set_footer(
+                    text=f"Requested by {interaction.user.display_name}",
+                    icon_url=interaction.user.display_avatar.url
+                )
+                await interaction.followup.send(embed=summary_embeds[0], ephemeral=True)
+            else:
+                view = DraftReminderSummaryPaginationView(summary_embeds, interaction.user)
+                await interaction.followup.send(embed=summary_embeds[0], view=view, ephemeral=True)
 
         except Exception as e:
             BotLogger.log_command_error("send-draft-reminder", interaction.user.name, e)
