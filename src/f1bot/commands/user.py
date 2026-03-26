@@ -8,9 +8,9 @@ from discord import app_commands
 from discord.ui import View, Button
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
-from src.f1bot.config import load_config
-from src.f1bot.utils.logger import BotLogger
-from src.f1bot.services.models import (
+from f1bot.config import load_config
+from f1bot.utils.logger import BotLogger
+from f1bot.services.models import (
     PlayerRepository,
     Player,
     LeagueRepository,
@@ -23,7 +23,8 @@ from src.f1bot.services.models import (
     ConstructorRepository,
     PlayerRoundScoreRepository,
     CounterpickRepository,
-    SeasonRepository
+    SeasonRepository,
+    DriverExhaustionRepository
 )
 
 config = load_config()
@@ -40,6 +41,7 @@ class FantasyUser(commands.Cog):
         self.player_round_score_repository = PlayerRoundScoreRepository(self.bot.db)
         self.counterpick_repository = CounterpickRepository(self.bot.db)
         self.season_repository = SeasonRepository(self.bot.db)
+        self.exhaustion_repository = DriverExhaustionRepository(self.bot.db)
         self.draft_service = self.bot.draftService
         self.embedService = self.bot.embedService
 
@@ -2072,6 +2074,94 @@ class FantasyUser(commands.Cog):
             BotLogger.log_command_error("check-deadlines", interaction.user.name, e)
             raise
 
+    @app_commands.command(name='exhausted', description='Check your exhausted drivers.')
+    @app_commands.guilds(discord.Object(id=config.guild_id))
+    async def exhausted(self, interaction: discord.Interaction):
+        BotLogger.log_command_invocation(
+            command_name="exhausted",
+            user=interaction.user.name,
+            user_id=interaction.user.id,
+            guild_id=interaction.guild_id
+        )
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            player: Optional[Player] = await self.player_repository.get_player_by_discord_id(interaction.user.id)
+
+            if player is None:
+                BotLogger.log_command_error("exhausted", interaction.user.name,
+                                            ValueError("Player not registered"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered! Please use /register to sign up first."),
+                    ephemeral=True)
+                return
+
+            player_leagues: List[League] = await self.player_repository.get_leagues_for_player_by_discord_id(
+                interaction.user.id)
+
+            if not player_leagues:
+                BotLogger.log_command_error("exhausted", interaction.user.name,
+                                            ValueError("Player not in any leagues"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True)
+                return
+
+            embeds = []
+
+            for league in player_leagues:
+                exhausted_records = await self.exhaustion_repository.get_exhausted_drivers(
+                    player_id=player.id,
+                    league_id=league.id
+                )
+
+                league_embed = discord.Embed(
+                    title="😴 Exhausted Drivers",
+                    description=f"**League:** {league.name}",
+                    color=discord.Color.from_rgb(
+                        (league.embed_color >> 16) & 0xFF,
+                        (league.embed_color >> 8) & 0xFF,
+                        league.embed_color & 0xFF
+                    )
+                )
+
+                if not exhausted_records:
+                    league_embed.add_field(
+                        name="No Exhausted Drivers",
+                        value="You have no exhausted drivers in this league.",
+                        inline=False
+                    )
+                else:
+                    for record in exhausted_records:
+                        driver = await self.driver_repository.get_driver_by_id(record.driver_id)
+                        if driver:
+                            league_embed.add_field(
+                                name=f"{driver.first_name} {driver.last_name} ({driver.code})",
+                                value=f"Used **{record.consecutive_uses}** consecutive race(s)",
+                                inline=True
+                            )
+
+                embeds.append(league_embed)
+
+            if len(embeds) == 1:
+                embeds[0].set_footer(text=f"Requested by {interaction.user.display_name}",
+                                     icon_url=interaction.user.display_avatar.url)
+                await interaction.followup.send(embed=embeds[0], ephemeral=True)
+            else:
+                view = ExhaustedPaginationView(embeds, interaction.user)
+                await interaction.followup.send(embed=embeds[0], view=view, ephemeral=True)
+
+            BotLogger.log_command_success("exhausted", interaction.user.name,
+                                          f"Exhausted drivers displayed across {len(embeds)} league(s)")
+
+        except Exception as e:
+            BotLogger.log_command_error("exhausted", interaction.user.name, e)
+            await interaction.followup.send(
+                embed=await self.embedService.create_generic_failure_embed(f"An error occurred: {str(e)}"),
+                ephemeral=True)
+
 
 class TeamPaginationView(View):
     def __init__(self, embeds: List[discord.Embed], requester: discord.User):
@@ -2326,6 +2416,42 @@ class CounterpickPaginationView(View):
                 f"An error occurred: {str(e)}"
             )
             await interaction.followup.send(embed=error_embed, ephemeral=True)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="▶️")
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+
+class ExhaustedPaginationView(View):
+    def __init__(self, embeds: List[discord.Embed], requester: discord.User):
+        super().__init__(timeout=300)  # 5 minutes timeout
+        self.embeds = embeds
+        self.current_page = 0
+        self.total_pages = len(embeds)
+        self.requester = requester
+
+        # Update button states
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button states based on current page"""
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page == self.total_pages - 1
+
+        self.embeds[self.current_page].set_footer(
+            text=f"League {self.current_page + 1}/{self.total_pages} • Requested by {self.requester.display_name}",
+            icon_url=self.requester.display_avatar.url
+        )
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="◀️")
+    async def previous_button(self, interaction: discord.Interaction, button: Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="▶️")
     async def next_button(self, interaction: discord.Interaction, button: Button):

@@ -8,8 +8,8 @@ import aiohttp
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from src.f1bot.services.dbservice import DatabaseManager
-from src.f1bot.services.models import (
+from f1bot.services.dbservice import DatabaseManager
+from f1bot.services.models import (
     SeasonRepository,
     DriverRepository,
     ConstructorRepository,

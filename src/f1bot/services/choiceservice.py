@@ -3,8 +3,8 @@ from typing import List
 import discord
 from discord import app_commands
 
-from src.f1bot.services.dbservice import DatabaseManager
-from src.f1bot.services.models import (
+from f1bot.services.dbservice import DatabaseManager
+from f1bot.services.models import (
     LeagueRepository,
     ConstructorRepository,
     DriverRepository,

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Dict, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.f1bot.services.models import (
+from f1bot.services.models import (
     SeasonRepository, ConstructorRepository, DriverRepository, GrandPrixRepository,
     LeagueRepository, PlayerRepository, DraftRepository, CounterpickRepository,
     RaceResultRepository, PlayerRoundScoreRepository, ScoringRuleRepository,

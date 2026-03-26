@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, Tuple, List, Dict
-from src.f1bot.services.models import (
+from f1bot.services.models import (
     GrandPrix, Draft, Driver, Constructor, Counterpick, DriverExhaustion,
     DraftRepository, DriverRepository, ConstructorRepository,
     GrandPrixRepository, CounterpickRepository, DriverExhaustionRepository,

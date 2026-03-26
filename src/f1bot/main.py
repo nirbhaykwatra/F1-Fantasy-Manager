@@ -3,12 +3,12 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from src.f1bot.config import load_config
-from src.f1bot.utils.logger import get_logger, log_event, log_error
-from src.f1bot.services.choiceservice import ChoiceService
-from src.f1bot.services.dbservice import DatabaseManager
-from src.f1bot.services.draftservice import DraftService
-from src.f1bot.services.embedservice import EmbedService
+from f1bot.config import load_config
+from f1bot.utils.logger import get_logger, log_event, log_error
+from f1bot.services.choiceservice import ChoiceService
+from f1bot.services.dbservice import DatabaseManager
+from f1bot.services.draftservice import DraftService
+from f1bot.services.embedservice import EmbedService
 
 
 async def main() -> None:
@@ -59,7 +59,7 @@ async def main() -> None:
         for command in config.cmds_dir.glob("*.py"):
             if command.name != '__init__.py':
                 try:
-                    await bot.load_extension(f'src.f1bot.commands.{command.name[:-3]}')
+                    await bot.load_extension(f'f1bot.commands.{command.name[:-3]}')
                     logger.info(f"Loaded extension: {command.name[:-3]}")
                     loaded_count += 1
                 except Exception as e:
@@ -133,7 +133,7 @@ async def main() -> None:
         for command in config.cmds_dir.glob("*.py"):
             if command.name != '__init__.py':
                 try:
-                    await bot.reload_extension(f'src.f1bot.commands.{command.name[:-3]}')
+                    await bot.reload_extension(f'f1bot.commands.{command.name[:-3]}')
                     reloaded.append(command.name[:-3])
                     logger.info(f"Reloaded extension: {command.name[:-3]}")
                 except Exception as e:
