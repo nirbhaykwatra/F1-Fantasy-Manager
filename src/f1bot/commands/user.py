@@ -577,6 +577,195 @@ class FantasyUser(commands.Cog):
             await interaction.followup.send(embed=await self.embedService.create_draft_failure_embed(
                 f"An unexpected error has occurred: {str(e)}."), ephemeral=True)
 
+    @app_commands.checks.has_any_role("Administrator")
+    @app_commands.command(name='send-draft-reminder', description='Send a DM reminder to all players in a league who have not yet drafted for the current Grand Prix.')
+    @app_commands.autocomplete(league=league_autocomplete)
+    @app_commands.describe(league='The league to send draft reminders for')
+    @app_commands.guilds(discord.Object(id=config.guild_id))
+    async def send_draft_reminder(self, interaction: discord.Interaction, league: str):
+        BotLogger.log_command_invocation(
+            command_name="send-draft-reminder",
+            user=interaction.user.name,
+            user_id=interaction.user.id,
+            guild_id=interaction.guild_id,
+            league=league
+        )
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Parse league ID
+            try:
+                league_id = int(league)
+            except ValueError:
+                BotLogger.log_command_error("send-draft-reminder", interaction.user.name,
+                                            ValueError(f"Invalid league ID: {league}"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("That league does not exist!"),
+                    ephemeral=True)
+                return
+
+            # Get the league
+            league_obj = await self.league_repository.get_league_by_id(league_id)
+            if not league_obj:
+                BotLogger.log_command_error("send-draft-reminder", interaction.user.name,
+                                            ValueError(f"League not found: {league_id}"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("League not found."),
+                    ephemeral=True)
+                return
+
+            # Check if the league belongs to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            if league_id not in guild_league_ids:
+                BotLogger.log_command_error("send-draft-reminder", interaction.user.name,
+                                            ValueError(
+                                                f"League {league_id} does not belong to guild {interaction.guild_id}"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "That league does not belong to this server!"),
+                    ephemeral=True)
+                return
+
+            # Get the current/next Grand Prix for this league's season
+            grand_prix = await self.grand_prix_repository.get_next_grand_prix(league_obj.season_id)
+            if not grand_prix:
+                BotLogger.log_command_error("send-draft-reminder", interaction.user.name,
+                                            ValueError("No upcoming Grand Prix found"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "No upcoming Grand Prix found for this league."),
+                    ephemeral=True)
+                return
+
+            # Get all players in the league
+            players_in_league = await self.player_repository.list_players_in_league(league_id)
+            if not players_in_league:
+                BotLogger.log_command_error("send-draft-reminder", interaction.user.name,
+                                            ValueError(f"No players found in league: {league_id}"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("No players found in this league."),
+                    ephemeral=True)
+                return
+
+            # Send DM to all registered players who have not yet drafted
+            reminder_results = []
+
+            for player in players_in_league:
+                # Skip players without a linked Discord account
+                if not player.discord_user_id:
+                    reminder_results.append((player.username, "⏭️ Skipped", "No linked Discord account"))
+                    continue
+
+                # Check if the player already has a draft for this Grand Prix
+                existing_draft = await self.draft_repository.get_draft(
+                    player_id=player.id,
+                    league_id=league_id,
+                    grand_prix_id=grand_prix.id
+                )
+
+                if existing_draft:
+                    # Player already drafted - skip
+                    reminder_results.append((player.username, "✅ Drafted", "Already has a draft submitted"))
+                    continue
+
+                # Attempt to send a DM reminder
+                try:
+                    discord_user = await interaction.client.fetch_user(player.discord_user_id)
+
+                    reminder_embed = discord.Embed(
+                        title="⏰ Draft Reminder",
+                        description=f"You haven't drafted your team yet for **{grand_prix.event_name}** (Round {grand_prix.round_number}) in **{league_obj.name}**!",
+                        color=league_obj.embed_color
+                    )
+
+                    reminder_embed.add_field(
+                        name="📋 Action Required",
+                        value="Use `/draft` to submit your team before the deadline.",
+                        inline=False
+                    )
+
+                    if grand_prix.draft_deadline_utc:
+                        deadline_ts = int(grand_prix.draft_deadline_utc.timestamp())
+                        reminder_embed.add_field(
+                            name="⏱️ Draft Deadline",
+                            value=f"<t:{deadline_ts}:F>",
+                            inline=False
+                        )
+
+                    reminder_embed.set_footer(
+                        text=f"This reminder was sent by an administrator of {league_obj.name}.")
+
+                    await discord_user.send(embed=reminder_embed)
+                    reminder_results.append((player.username, "📨 Reminded", "DM sent successfully"))
+
+                except discord.Forbidden:
+                    BotLogger.log_command_error(
+                        "send-draft-reminder",
+                        interaction.user.name,
+                        ValueError(f"Could not DM player {player.username} (DMs disabled)")
+                    )
+                    reminder_results.append((player.username, "❌ Failed", "DMs are disabled"))
+                except discord.NotFound:
+                    BotLogger.log_command_error(
+                        "send-draft-reminder",
+                        interaction.user.name,
+                        ValueError(f"Could not find Discord user for player {player.username}")
+                    )
+                    reminder_results.append((player.username, "❌ Failed", "Discord user not found"))
+
+                # Build per-player paginated summary for the admin
+                reminded_count = sum(1 for _, status, _ in reminder_results if status == "📨 Reminded")
+
+                FIELDS_PER_PAGE = 24  # Reserve 1 field for the totals line on each page
+                description = f"**{grand_prix.event_name}** • **{league_obj.name}**\n{reminded_count} reminder(s) sent."
+
+                # Split reminder_results into pages
+                chunks = [reminder_results[i:i + FIELDS_PER_PAGE] for i in
+                          range(0, len(reminder_results), FIELDS_PER_PAGE)]
+                if not chunks:
+                    chunks = [[]]
+
+                summary_embeds = []
+                for chunk in chunks:
+                    embed = discord.Embed(
+                        title="Draft Reminder Summary",
+                        description=description,
+                        color=league_obj.embed_color
+                    )
+                    for username, status, reason in chunk:
+                        embed.add_field(
+                            name=f"{status} {username}",
+                            value=reason,
+                            inline=False
+                        )
+                    summary_embeds.append(embed)
+
+                BotLogger.log_command_success(
+                    "send-draft-reminder",
+                    interaction.user.name,
+                    f"Sent {reminded_count} draft reminder(s) for {grand_prix.event_name} in {league_obj.name}"
+                )
+
+                if len(summary_embeds) == 1:
+                    summary_embeds[0].set_footer(
+                        text=f"Requested by {interaction.user.display_name}",
+                        icon_url=interaction.user.display_avatar.url
+                    )
+                    await interaction.followup.send(embed=summary_embeds[0], ephemeral=True)
+                else:
+                    view = DraftReminderSummaryPaginationView(summary_embeds, interaction.user)
+                    await interaction.followup.send(embed=summary_embeds[0], view=view, ephemeral=True)
+
+        except Exception as e:
+            BotLogger.log_command_error("send-draft-reminder", interaction.user.name, e)
+            await interaction.followup.send(
+                embed=await self.embedService.create_generic_failure_embed(
+                    f"An unexpected error has occurred: {str(e)}."),
+                ephemeral=True)
+
     @app_commands.command(name='profile', description="View yours or another user's profile!")
     @app_commands.describe(user='The user you want to view. Leave blank to view your own profile.')
     @app_commands.guilds(discord.Object(id=config.guild_id))
@@ -2638,6 +2827,42 @@ class ExhaustedPaginationView(View):
 
         self.embeds[self.current_page].set_footer(
             text=f"League {self.current_page + 1}/{self.total_pages} • Requested by {self.requester.display_name}",
+            icon_url=self.requester.display_avatar.url
+        )
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="◀️")
+    async def previous_button(self, interaction: discord.Interaction, button: Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="▶️")
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+
+class DraftReminderSummaryPaginationView(View):
+    def __init__(self, embeds: List[discord.Embed], requester: discord.User):
+        super().__init__(timeout=300)  # 5 minutes timeout
+        self.embeds = embeds
+        self.current_page = 0
+        self.total_pages = len(embeds)
+        self.requester = requester
+
+        # Update button states
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button states based on current page"""
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page == self.total_pages - 1
+
+        self.embeds[self.current_page].set_footer(
+            text=f"Page {self.current_page + 1}/{self.total_pages} • Requested by {self.requester.display_name}",
             icon_url=self.requester.display_avatar.url
         )
 
