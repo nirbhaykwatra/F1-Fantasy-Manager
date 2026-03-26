@@ -166,6 +166,42 @@ class FantasyUser(commands.Cog):
         )
 
         try:
+            player = await self.player_repository.get_player_by_discord_id(interaction.user.id)
+            if not player:
+                BotLogger.log_command_error("unregister", interaction.user.name,
+                                            ValueError("Player not registered"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not registered!"),
+                    ephemeral=True
+                )
+                return
+
+            # Get all leagues the player is in
+            player_leagues = await self.player_repository.get_leagues_for_player_by_discord_id(interaction.user.id)
+
+            if not player_leagues:
+                BotLogger.log_command_error("unregister", interaction.user.name,
+                                            ValueError("Player not in any leagues"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True
+                )
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("unregister", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
+                return
             # Search for league by id
             league_id = int(league)
             league_object: League | None = await self.league_repository.get_league_by_id(league_id)
@@ -258,6 +294,33 @@ class FantasyUser(commands.Cog):
                 BotLogger.log_command_error("draft", interaction.user.name, ValueError("Player not registered"))
                 await interaction.followup.send(embed=await self.embedService.create_draft_failure_embed(
                     "You are not registered. Please use /register to sign up first."), ephemeral=True)
+                return
+
+            # Get all leagues the player is in
+            player_leagues = await self.player_repository.get_leagues_for_player_by_discord_id(interaction.user.id)
+
+            if not player_leagues:
+                BotLogger.log_command_error("draft", interaction.user.name,
+                                            ValueError("Player not in any leagues"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True
+                )
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("draft", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
                 return
 
             # Parse league ID
@@ -544,8 +607,31 @@ class FantasyUser(commands.Cog):
                 return
 
             # Get all leagues the player is in
-            player_leagues: List[League] = await self.player_repository.get_leagues_for_player_by_discord_id(
-                target_user.id)
+            player_leagues = await self.player_repository.get_leagues_for_player_by_discord_id(interaction.user.id)
+
+            if not player_leagues:
+                BotLogger.log_command_error("profile", interaction.user.name,
+                                            ValueError("Player not in any leagues"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True
+                )
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("profile", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
+                return
 
             # Create list of embeds
             embeds = []
@@ -779,6 +865,21 @@ class FantasyUser(commands.Cog):
                     ephemeral=True)
                 return
 
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("team", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
+                return
+
             # Create list of embeds - one per league
             embeds = []
 
@@ -974,6 +1075,42 @@ class FantasyUser(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
+            player = await self.player_repository.get_player_by_discord_id(interaction.user.id)
+            if not player:
+                BotLogger.log_command_error("counterpick", interaction.user.name,
+                                            ValueError("Player not registered"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not registered!"),
+                    ephemeral=True
+                )
+                return
+
+            # Get all leagues the player is in
+            player_leagues = await self.player_repository.get_leagues_for_player_by_discord_id(interaction.user.id)
+
+            if not player_leagues:
+                BotLogger.log_command_error("counterpick", interaction.user.name,
+                                            ValueError("Player not in any leagues"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True
+                )
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("exhausted", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
+                return
             # Get the picking player
             picking_player = await self.player_repository.get_player_by_discord_id(interaction.user.id)
             if not picking_player:
@@ -1242,6 +1379,33 @@ class FantasyUser(commands.Cog):
                 )
                 return
 
+            # Get all leagues the player is in
+            player_leagues = await self.player_repository.get_leagues_for_player_by_discord_id(interaction.user.id)
+
+            if not player_leagues:
+                BotLogger.log_command_error("cancel-counterpick", interaction.user.name,
+                                            ValueError("Player not in any leagues"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True
+                )
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("cancel-counterpick", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
+                return
+
             # Parse league ID
             league_id = int(league)
             league_obj = await self.league_repository.get_league_by_id(league_id)
@@ -1447,6 +1611,21 @@ class FantasyUser(commands.Cog):
                     embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
                     ephemeral=True
                 )
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("my-counterpicks", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
+                    ephemeral=True)
                 return
 
             # Collect all counterpicks across all leagues
@@ -2087,6 +2266,7 @@ class FantasyUser(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
+
             player: Optional[Player] = await self.player_repository.get_player_by_discord_id(interaction.user.id)
 
             if player is None:
@@ -2106,6 +2286,21 @@ class FantasyUser(commands.Cog):
                                             ValueError("Player not in any leagues"))
                 await interaction.followup.send(
                     embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
+                    ephemeral=True)
+                return
+
+            # Filter to only leagues belonging to this guild
+            guild_leagues: List[League] = await self.league_repository.get_leagues_by_discord_guild(
+                interaction.guild_id)
+            guild_league_ids = {league.id for league in guild_leagues}
+            player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
+
+            if not player_leagues:
+                BotLogger.log_command_error("exhausted", interaction.user.name,
+                                            ValueError("Player not in any leagues in this guild"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed(
+                        "You are not registered in any leagues in this server!"),
                     ephemeral=True)
                 return
 
