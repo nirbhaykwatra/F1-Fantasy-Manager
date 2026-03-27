@@ -22,6 +22,7 @@ class Config:
     # F1
     season: int
     current_round: int
+    weather_api_key: str
 
     # Appearance
     embed_color: tuple[int, int, int] = (232, 39, 42)
@@ -41,6 +42,7 @@ def load_config() -> Config:
     db_host = os.getenv("SQLHOST", "localhost")
     db_name = os.getenv("SQLDB", "f1fantasy")
     database_url = f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}"
+    weather_api_key = os.getenv("WEATHER_API_KEY")
 
     return Config(
         token=token,
@@ -52,4 +54,5 @@ def load_config() -> Config:
         fastf1_cache_dir=base_dir / "data" / "fastf1" / "cache",
         season=int(os.getenv("F1_SEASON", "2025")),
         current_round=int(os.getenv("F1_ROUND", "1")),
+        weather_api_key=weather_api_key
     )

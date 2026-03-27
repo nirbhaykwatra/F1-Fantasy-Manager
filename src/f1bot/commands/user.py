@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 from io import BytesIO
+import aiohttp
 import discord
 import zoneinfo
 import pytz
@@ -20,11 +21,15 @@ from f1bot.services.models import (
     Draft,
     GrandPrixRepository,
     DriverRepository,
+    Driver,
     ConstructorRepository,
     PlayerRoundScoreRepository,
     CounterpickRepository,
     SeasonRepository,
-    DriverExhaustionRepository
+    Season,
+    DriverExhaustionRepository,
+    RaceResultRepository,
+    RaceResult
 )
 
 config = load_config()
@@ -42,6 +47,7 @@ class FantasyUser(commands.Cog):
         self.counterpick_repository = CounterpickRepository(self.bot.db)
         self.season_repository = SeasonRepository(self.bot.db)
         self.exhaustion_repository = DriverExhaustionRepository(self.bot.db)
+        self.race_result_repository = RaceResultRepository(self.bot.db)
         self.draft_service = self.bot.draftService
         self.embedService = self.bot.embedService
 
@@ -1954,9 +1960,322 @@ class FantasyUser(commands.Cog):
             grand_prix=grand_prix
         )
 
-        BotLogger.log_command_error("grand-prix", interaction.user.name,
-                                    NotImplementedError("Command not yet implemented"))
-        await interaction.response.send_message(f'This command has not been implemented.', ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Fetch the Grand Prix
+            gp = await self.grand_prix_repository.get_grand_prix_by_id(int(grand_prix))
+            if not gp:
+                BotLogger.log_command_error("grand-prix", interaction.user.name,
+                                            ValueError(f"Grand Prix not found: {grand_prix}"))
+                await interaction.followup.send(
+                    embed=await self.embedService.create_generic_failure_embed("Grand Prix not found!"),
+                    ephemeral=True)
+                return
+
+            # Fetch all race results for this GP (all sessions)
+            all_results: List[RaceResult] = await self.race_result_repository.get_all_race_results_for_gp(gp.id)
+
+            # Group results by session type
+            results_by_session: dict[str, List[RaceResult]] = {}
+            for result in all_results:
+                results_by_session.setdefault(result.session_type, [])
+                results_by_session[result.session_type].append(result)
+
+            # Determine whether this is a sprint weekend
+            is_sprint_weekend = gp.event_format in ('sprint', 'sprint_qualifying')
+
+            # ── Page 1: Grand Prix overview ──────────────────────────────────────
+            status_emoji = "✅" if gp.is_completed else "🔜"
+            overview_embed = discord.Embed(
+                title=f"{status_emoji} Round {gp.round_number}: {gp.event_name}",
+                description=f"**Format:** {'Formula 1 Sprint' if is_sprint_weekend else 'Formula 1 Grand Prix'}",
+                color=discord.Color.from_str("#e8272a")
+            )
+
+            # Circuit info
+            if gp.circuit_key:
+                overview_embed.add_field(name="🏟️ Circuit", value=gp.circuit_key, inline=True)
+
+            overview_embed.add_field(
+                name="📋 Status",
+                value="Completed" if gp.is_completed else "Upcoming",
+                inline=True
+            )
+
+            overview_embed.add_field(
+                name="📅 Session Schedule",
+                value="",
+                inline=False
+            )
+
+            # Session schedule
+            if gp.sprint_quali_date_utc:
+                ts = int(gp.sprint_quali_date_utc.timestamp())
+                overview_embed.add_field(
+                    name=f"⏱️ **Sprint Qualifying:** ⏱️",
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+            if gp.sprint_date_utc:
+                ts = int(gp.sprint_date_utc.timestamp())
+                overview_embed.add_field(
+                    name=f"🏎️ **Sprint:** 🏎️",
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+            if gp.quali_date_utc:
+                ts = int(gp.quali_date_utc.timestamp())
+                overview_embed.add_field(
+                    name=f"⏱️ **Qualifying:** ⏱️",
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+            if gp.race_date_utc:
+                ts = int(gp.race_date_utc.timestamp())
+                overview_embed.add_field(
+                    name=f"🏁 **Race:** 🏁",
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+
+
+            overview_embed.add_field(
+                name="⏰ Deadlines ⏰",
+                value="",
+                inline=False
+            )
+
+            # Deadlines
+            if gp.draft_deadline_utc:
+                ts = int(gp.draft_deadline_utc.timestamp())
+                overview_embed.add_field(
+                    name=f'📝 **Draft Deadline** 📝',
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+            if gp.counterpick_deadline_utc:
+                ts = int(gp.counterpick_deadline_utc.timestamp())
+                overview_embed.add_field(
+                    name=f'🏹 **Counterpick Deadline** 🏹',
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+            if gp.draft_reset_utc:
+                ts = int(gp.draft_reset_utc.timestamp())
+                overview_embed.add_field(
+                    name=f'🔄 **Draft Reset** 🔄',
+                    value=f"<t:{ts}:F>",
+                    inline=True
+                )
+
+
+            # Local track weather (current conditions at the circuit)
+            weather_text = await self._fetch_circuit_weather(gp.circuit_key)
+            if weather_text:
+                overview_embed.add_field(
+                    name=f"🌤️ Circuit Weather - {weather_text[0]}",
+                    value="",
+                    inline=False
+                )
+
+            if weather_text[1]:
+                overview_embed.add_field(
+                    name="🌡️ **Temperature** 🌡️",
+                    value=weather_text[1],
+                    inline=True
+                )
+            if weather_text[2]:
+                overview_embed.add_field(
+                    name="💧 **Humidity** 💧",
+                    value=weather_text[2],
+                    inline=True
+                )
+            if weather_text[3]:
+                overview_embed.add_field(
+                    name="💨 **Wind Speeds** 💨",
+                    value=weather_text[3],
+                    inline=True
+                )
+
+            # Sessions with results available (overview summary)
+            if results_by_session:
+                session_labels = {
+                    'qualifying': '⏱️ Qualifying',
+                    'race': '🏁 Race',
+                    'sprint': '🏎️ Sprint',
+                    'sprint_qualifying': '⏱️ Sprint Qualifying',
+                }
+                available = ", ".join(
+                    session_labels.get(s, s.replace('_', ' ').title())
+                    for s in sorted(results_by_session.keys())
+                )
+                overview_embed.add_field(
+                    name="📊 Results Available",
+                    value=available,
+                    inline=False
+                )
+            else:
+                overview_embed.add_field(
+                    name="📊 Results",
+                    value="No results available yet.",
+                    inline=False
+                )
+
+            embeds = [overview_embed]
+
+            # ── One page per session with results ────────────────────────────────
+            session_order = ['race', 'qualifying', 'sprint', 'sprint_qualifying']
+            session_labels = {
+                'qualifying': '⏱️ Qualifying Results',
+                'race': '🏁 Race Results',
+                'sprint': '🏎️ Sprint Results',
+                'sprint_qualifying': '⏱️ Sprint Qualifying Results',
+            }
+            position_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+            for session_type in session_order:
+                if session_type not in results_by_session:
+                    continue
+
+                session_results = sorted(results_by_session[session_type], key=lambda r: r.position)
+                season: Optional[Season] = await self.season_repository.get_active_season()
+                drivers: List[Driver] = await self.driver_repository.list_drivers_by_season(season_id=season.id, active_only=False)
+                driver_count: int = len(drivers)
+                result_lines = []
+                for result in session_results[:driver_count]:
+                    driver = await self.driver_repository.get_driver_by_id(result.driver_id)
+                    pos_str = position_emojis.get(result.position, f"**P{result.position}**")
+                    if driver:
+                        result_lines.append(
+                            f"{pos_str} {driver.first_name} {driver.last_name}"
+                        )
+                    else:
+                        result_lines.append(f"{pos_str} Driver #{result.driver_id}")
+
+                session_embed = discord.Embed(
+                    title=f"Round {gp.round_number}: {gp.event_name}",
+                    description=f"**{session_labels.get(session_type, session_type.replace('_', ' ').title())}**",
+                    color=discord.Color.from_str("#e8272a")
+                )
+
+                if result_lines:
+                    col1 = result_lines[:10]
+                    col2 = result_lines[10:20]
+                    col3 = result_lines[20:30]
+                    session_embed.add_field(name="\u200b", value="\n".join(col1), inline=bool(col2))
+                    if col2:
+                        session_embed.add_field(name="\u200b", value="\n".join(col2), inline=True)
+                    if col3:
+                        session_embed.add_field(name="\u200b", value="\n".join(col3), inline=True)
+                else:
+                    session_embed.add_field(name="Results", value="No results found for this session.",
+                                            inline=False)
+
+                embeds.append(session_embed)
+
+            # ── Send with pagination ──────────────────────────────────────────────
+            if len(embeds) == 1:
+                embeds[0].set_footer(
+                    text=f"Requested by {interaction.user.display_name}",
+                    icon_url=interaction.user.display_avatar.url
+                )
+                await interaction.followup.send(embed=embeds[0], ephemeral=True)
+            else:
+                view = GrandPrixPaginationView(embeds, interaction.user)
+                await interaction.followup.send(embed=embeds[0], view=view, ephemeral=True)
+
+            BotLogger.log_command_success("grand-prix", interaction.user.name,
+                                          f"Grand Prix details displayed for {gp.event_name}")
+
+        except Exception as e:
+            BotLogger.log_command_error("grand-prix", interaction.user.name, e)
+            await interaction.followup.send(
+                embed=await self.embedService.create_generic_failure_embed(
+                    f"An unexpected error has occurred: {str(e)}."),
+                ephemeral=True)
+
+    # Mapping of Ergast/Jolpica circuit IDs to city names recognised by the OpenWeatherMap API
+    _CIRCUIT_CITY_MAP: dict[str, str] = {
+        "albert_park": "Melbourne,AU",
+        "americas": "Austin,US",
+        "bahrain": "Sakhir,BH",
+        "baku": "Baku,AZ",
+        "catalunya": "Barcelona,ES",
+        "hungaroring": "Budapest,HU",
+        "imola": "Imola,IT",
+        "interlagos": "São Paulo,BR",
+        "jeddah": "Jeddah,SA",
+        "losail": "Lusail,QA",
+        "marina_bay": "Singapore,SG",
+        "miami": "Miami,US",
+        "monaco": "Monaco,MC",
+        "monza": "Monza,IT",
+        "red_bull_ring": "Spielberg,AT",
+        "rodriguez": "Mexico City,MX",
+        "shanghai": "Shanghai,CN",
+        "silverstone": "Silverstone,GB",
+        "spa": "Stavelot,BE",
+        "suzuka": "Suzuka,JP",
+        "vegas": "Las Vegas,US",
+        "villeneuve": "Montreal,CA",
+        "yas_marina": "Abu Dhabi,AE",
+        "zandvoort": "Zandvoort,NL",
+    }
+
+    async def _fetch_circuit_weather(self, circuit_key: Optional[str]) -> Optional[List[str]]:
+        """
+        Fetch current weather at the circuit location using the OpenWeatherMap
+        Current Weather Data API and return a formatted string suitable for
+        an embed field value.  Returns None if the key is unknown or the
+        request fails, so the caller can simply skip the field.
+        """
+        if not circuit_key or not config.weather_api_key:
+            return None
+
+        city = self._CIRCUIT_CITY_MAP.get(circuit_key)
+        if not city:
+            return None
+
+        url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {
+            "q": city,
+            "appid": config.weather_api_key,
+            "units": "metric",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status != 200:
+                        BotLogger.log_command_error(
+                            "grand-prix", "system",
+                            ValueError(f"OpenWeatherMap returned HTTP {resp.status} for {city}")
+                        )
+                        return None
+                    data = await resp.json()
+        except Exception as e:
+            BotLogger.log_command_error("grand-prix", "system",
+                                        ValueError(f"Weather fetch failed for {city}: {e}"))
+            return None
+
+        # Parse the response fields we care about
+        temp_c: float = data.get("main", {}).get("temp", 0)
+        feels_like_c: float = data.get("main", {}).get("feels_like", 0)
+        humidity: int = data.get("main", {}).get("humidity", 0)
+        description: str = data.get("weather", [{}])[0].get("description", "").capitalize()
+        wind_speed_ms: float = data.get("wind", {}).get("speed", 0)
+        wind_speed_kph: float = wind_speed_ms * 3.6
+        location_name: str = data.get("name", city)
+
+        results: List[str] = []
+
+        results.append(f"**{description}** in {location_name}")
+        results.append(f"**{temp_c:.1f}°C** (feels like {feels_like_c:.1f}°C)")
+        results.append(f"**{humidity}%**")
+        results.append(f"**{wind_speed_kph:.1f} km/h**")
+
+        return results
 
     @app_commands.command(name='points', description='View the current points table for the selected league.')
     @app_commands.autocomplete(league=league_autocomplete)
@@ -2863,6 +3182,43 @@ class DraftReminderSummaryPaginationView(View):
 
         self.embeds[self.current_page].set_footer(
             text=f"Page {self.current_page + 1}/{self.total_pages} • Requested by {self.requester.display_name}",
+            icon_url=self.requester.display_avatar.url
+        )
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.primary, emoji="◀️")
+    async def previous_button(self, interaction: discord.Interaction, button: Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary, emoji="▶️")
+    async def next_button(self, interaction: discord.Interaction, button: Button):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+
+
+class GrandPrixPaginationView(View):
+    def __init__(self, embeds: List[discord.Embed], requester: discord.User):
+        super().__init__(timeout=300)  # 5 minutes timeout
+        self.embeds = embeds
+        self.current_page = 0
+        self.total_pages = len(embeds)
+        self.requester = requester
+
+        # Update button states
+        self.update_buttons()
+
+    def update_buttons(self):
+        """Update button states based on current page"""
+        self.previous_button.disabled = self.current_page == 0
+        self.next_button.disabled = self.current_page == self.total_pages - 1
+
+        page_label = "Overview" if self.current_page == 0 else f"Session {self.current_page}"
+        self.embeds[self.current_page].set_footer(
+            text=f"{page_label} • Page {self.current_page + 1}/{self.total_pages} • Requested by {self.requester.display_name}",
             icon_url=self.requester.display_avatar.url
         )
 
