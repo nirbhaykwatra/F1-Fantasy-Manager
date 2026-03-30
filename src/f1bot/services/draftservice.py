@@ -4,7 +4,7 @@ from f1bot.services.models import (
     GrandPrix, Draft, Driver, Constructor, Counterpick, DriverExhaustion,
     DraftRepository, DriverRepository, ConstructorRepository,
     GrandPrixRepository, CounterpickRepository, DriverExhaustionRepository,
-    DatabaseManager
+    DatabaseManager, ConstructorExhaustionRepository
 )
 
 
@@ -27,6 +27,7 @@ class DraftService:
         self.grand_prix_repo = GrandPrixRepository(db_manager)
         self.counterpick_repo = CounterpickRepository(db_manager)
         self.exhaustion_repo = DriverExhaustionRepository(db_manager)
+        self.constructor_exhaustion_repo = ConstructorExhaustionRepository(db_manager)
 
     async def validate_draft_deadline(self, grand_prix_id: int) -> Tuple[bool, Optional[str]]:
         """
@@ -166,6 +167,36 @@ class DraftService:
 
         return True, None, []
 
+    async def validate_constructor_exhaustion(
+            self,
+            player_id: int,
+            league_id: int,
+            constructor_id: int
+    ) -> Tuple[bool, Optional[str], List[str]]:
+        """
+        Validate that an exhausted constructor is not being drafted.
+        Only checks constructors that are LOCKED IN (past their draft deadline).
+
+        Returns:
+            Tuple of (is_valid, error_message, list_of_exhausted_constructor_names)
+        """
+        # Get exhaustion status for this specific constructor
+        exhaustion = await self.constructor_exhaustion_repo.get_constructor_exhaustion_status(
+            player_id, league_id, constructor_id
+        )
+
+        if exhaustion and exhaustion.is_exhausted:
+            constructor = await self.constructor_repo.get_constructor_by_id(constructor_id)
+            constructor_name = constructor.full_name if constructor else f"Constructor ID {constructor_id}"
+
+            error_msg = (
+                f"Cannot draft exhausted constructor: {constructor_name}. "
+                f"This constructor was used in the previous 2 consecutive Grand Prix and must sit out this round."
+            )
+            return False, error_msg, [constructor_name]
+
+        return True, None, []
+
     async def validate_prospective_exhaustion(
             self,
             player_id: int,
@@ -174,14 +205,15 @@ class DraftService:
             driver1_id: int,
             driver2_id: int,
             driver3_id: int,
+            constructor_id: int,
             wildcard_id: int
     ) -> Tuple[bool, Optional[str], List[str]]:
         """
-        Validate that no driver is being drafted for more than 2 consecutive GPs in advance.
+        Validate that no driver or constructor is being drafted for more than 2 consecutive GPs in advance.
         This checks prospective drafts (not yet locked in) to prevent illegal advance drafting.
 
         Returns:
-            Tuple of (is_valid, error_message, list_of_violating_driver_names)
+            Tuple of (is_valid, error_message, list_of_violating_names)
         """
         driver_ids = [driver1_id, driver2_id, driver3_id, wildcard_id]
 
@@ -201,7 +233,9 @@ class DraftService:
         existing_drafts = await self.draft_repo.list_drafts_for_player_in_league(player_id, league_id)
 
         # Build a map of round_number -> drafted_driver_ids
+        # and a map of round_number -> constructor_id
         drafts_by_round = {}
+        constructor_by_round = {}
         for draft in existing_drafts:
             gp = await self.grand_prix_repo.get_grand_prix_by_id(draft.grand_prix_id)
             if gp and gp.season_id == season_id:
@@ -211,9 +245,11 @@ class DraftService:
                     draft.driver3_id,
                     draft.wildcard_id
                 ]
+                constructor_by_round[gp.round_number] = draft.constructor_id
 
         # Add the current draft being validated
         drafts_by_round[current_round] = driver_ids
+        constructor_by_round[current_round] = constructor_id
 
         # Check each driver for consecutive usage
         violating_drivers = []
@@ -241,6 +277,26 @@ class DraftService:
                 f"You have already drafted them for 2 consecutive races."
             )
             return False, error_msg, violating_drivers
+
+        # Check constructor for consecutive usage
+        consecutive_count = 0
+        max_consecutive = 0
+
+        for round_num in sorted(constructor_by_round.keys()):
+            if constructor_by_round[round_num] == constructor_id:
+                consecutive_count += 1
+                max_consecutive = max(max_consecutive, consecutive_count)
+            else:
+                consecutive_count = 0
+
+        if max_consecutive > 2:
+            constructor = await self.constructor_repo.get_constructor_by_id(constructor_id)
+            constructor_name = constructor.full_name if constructor else f"Constructor ID {constructor_id}"
+            error_msg = (
+                f"Cannot draft {constructor_name} for more than 2 consecutive Grand Prix. "
+                f"You have already drafted them for 2 consecutive races."
+            )
+            return False, error_msg, [constructor_name]
 
         return True, None, []
 
@@ -395,6 +451,13 @@ class DraftService:
             if not is_valid:
                 return None, error
 
+            # 5b. Validate LOCKED-IN constructor exhaustion (from past deadlines)
+            is_valid, error, _ = await self.validate_constructor_exhaustion(
+                player_id, league_id, constructor_id
+            )
+            if not is_valid:
+                return None, error
+
             # 6. Validate PROSPECTIVE exhaustion (no more than 2 consecutive in advance)
             is_valid, error, _ = await self.validate_prospective_exhaustion(
                 player_id, league_id, grand_prix_id,
@@ -436,6 +499,8 @@ class DraftService:
             elif "Draft must include drivers from at least 3 different constructors" in error_msg:
                 return None, "Your 4 drivers must represent at least 3 different constructors"
             elif "Cannot draft exhausted driver" in error_msg:
+                return None, error_msg
+            elif "Cannot draft exhausted constructor" in error_msg:
                 return None, error_msg
             elif "Cannot draft driver" in error_msg and "counterpicked" in error_msg:
                 return None, error_msg
