@@ -212,6 +212,35 @@ COMMENT ON TABLE driver_exhaustion IS 'Tracks consecutive driver usage to enforc
 COMMENT ON COLUMN driver_exhaustion.consecutive_uses IS 'Number of consecutive GPs this driver has been used';
 COMMENT ON COLUMN driver_exhaustion.is_exhausted IS 'TRUE if driver was used 2 GPs in a row and must sit out next GP';
 
+-- ============================================================
+-- CONSTRUCTOR EXHAUSTION TRACKING
+-- Tracks consecutive uses of constructors to enforce the exhaustion rule
+-- ============================================================
+
+CREATE TABLE constructor_exhaustion (
+    id              INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    player_id       INT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    league_id       INT NOT NULL REFERENCES leagues(id) ON DELETE CASCADE,
+    constructor_id  INT NOT NULL REFERENCES constructors(id) ON DELETE CASCADE,
+    last_grand_prix_id INT NOT NULL REFERENCES grands_prix(id) ON DELETE CASCADE,
+    consecutive_uses INT NOT NULL DEFAULT 1,
+    is_exhausted    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (player_id, league_id, constructor_id),
+    CHECK (consecutive_uses >= 0)
+);
+
+CREATE INDEX idx_constructor_exhaustion_player_league ON constructor_exhaustion (player_id, league_id);
+CREATE INDEX idx_constructor_exhaustion_constructor ON constructor_exhaustion (constructor_id);
+CREATE INDEX idx_constructor_exhaustion_exhausted ON constructor_exhaustion (player_id, league_id) WHERE is_exhausted = TRUE;
+
+COMMENT ON TABLE constructor_exhaustion IS 'Tracks consecutive constructor usage to enforce exhaustion rules';
+COMMENT ON COLUMN constructor_exhaustion.consecutive_uses IS 'Number of consecutive GPs this constructor has been used';
+COMMENT ON COLUMN constructor_exhaustion.is_exhausted IS 'TRUE if constructor was used 2 GPs in a row and must sit out next GP';
+
+
 -- ------------------------------------------------------------
 -- COUNTERPICKS (driver bans) - League-specific
 -- ------------------------------------------------------------

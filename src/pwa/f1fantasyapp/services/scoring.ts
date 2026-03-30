@@ -285,9 +285,12 @@ export class ScoringService {
 
                 // 9. Update driver exhaustion tracking
                 await this.updateDriverExhaustion(draft, client);
+
+                // 10. Update constructor exhaustion tracking
+                await this.updateConstructorExhaustion(draft, client);
             }
 
-            // 10. Mark the Grand Prix as completed
+            // 11. Mark the Grand Prix as completed
             await client.query(
                 'UPDATE grands_prix SET is_completed = TRUE WHERE id = $1',
                 [grandPrixId]
@@ -439,10 +442,10 @@ export class ScoringService {
             ]
             : [];
 
-        // Assign weights: previous drivers get 3x weight, others get 1x
+        // Assign weights: previous drivers get 2x weight, others get 1x
         const weightedDrivers = availableDrivers.map(d => ({
             ...d,
-            weight: previousDriverIds.includes(d.id) ? 3 : 1
+            weight: previousDriverIds.includes(d.id) ? 2 : 1
         }));
 
         // Weighted random selection
@@ -797,6 +800,76 @@ export class ScoringService {
                     ]
                 );
             }
+        }
+    }
+
+    // Update constructor exhaustion status after calculating points
+    private async updateConstructorExhaustion(draft: Draft, client: any): Promise<void> {
+        const constructorId = draft.constructor_id;
+
+        // Get the current GP's round number
+        const gpResult = await client.query(
+            'SELECT round_number FROM grands_prix WHERE id = $1',
+            [draft.grand_prix_id]
+        );
+        const currentRound = gpResult.rows[0].round_number;
+
+        // Get previous GP
+        const prevGpResult = await client.query(
+            `SELECT id FROM grands_prix 
+       WHERE season_id = (SELECT season_id FROM grands_prix WHERE id = $1)
+       AND round_number = $2`,
+            [draft.grand_prix_id, currentRound - 1]
+        );
+
+        if (prevGpResult.rows.length === 0) {
+            // First GP of season - initialize exhaustion tracking
+            await client.query(`INSERT INTO constructor_exhaustion 
+           (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses, is_exhausted)
+           VALUES ($1, $2, $3, $4, 1, FALSE)
+           ON CONFLICT (player_id, league_id, constructor_id)
+           DO UPDATE SET 
+             consecutive_uses = 1,
+             is_exhausted = FALSE,
+             last_grand_prix_id = $4,
+             updated_at = NOW()`,
+                    [draft.player_id, draft.league_id, constructorId, draft.grand_prix_id]
+                );
+            return;
+        }
+
+        const prevGpId = prevGpResult.rows[0].id;
+
+        // Check which constructor was used in previous GP
+        const prevDraftResult = await client.query(
+            `SELECT constructor_id FROM drafts WHERE player_id = $1 AND league_id = $2 AND grand_prix_id = $3`,
+            [draft.player_id, draft.league_id, prevGpId]
+        );
+
+        if (prevDraftResult.rows.length > 0) {
+            const prevConstructorId = prevDraftResult.rows[0].constructor_id;
+
+            const wasUsedBefore = prevConstructorId === constructorId;
+
+            await client.query(
+                `INSERT INTO constructor_exhaustion 
+       (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses, is_exhausted)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (player_id, league_id, constructor_id)
+       DO UPDATE SET 
+         consecutive_uses = $5,
+         is_exhausted = $6,
+         last_grand_prix_id = $4,
+         updated_at = NOW()`,
+                [
+                    draft.player_id,
+                    draft.league_id,
+                    constructorId,
+                    draft.grand_prix_id,
+                    wasUsedBefore ? 2 : 1,
+                    wasUsedBefore // Exhausted if used 2 GPs in a row
+                ]
+            );
         }
     }
 }

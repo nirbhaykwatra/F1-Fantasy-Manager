@@ -28,6 +28,7 @@ from f1bot.services.models import (
     SeasonRepository,
     Season,
     DriverExhaustionRepository,
+    ConstructorExhaustionRepository,
     RaceResultRepository,
     RaceResult
 )
@@ -46,7 +47,8 @@ class FantasyUser(commands.Cog):
         self.player_round_score_repository = PlayerRoundScoreRepository(self.bot.db)
         self.counterpick_repository = CounterpickRepository(self.bot.db)
         self.season_repository = SeasonRepository(self.bot.db)
-        self.exhaustion_repository = DriverExhaustionRepository(self.bot.db)
+        self.driver_exhaustion_repository = DriverExhaustionRepository(self.bot.db)
+        self.constructor_exhaustion_repository = ConstructorExhaustionRepository(self.bot.db)
         self.race_result_repository = RaceResultRepository(self.bot.db)
         self.draft_service = self.bot.draftService
         self.embedService = self.bot.embedService
@@ -2815,13 +2817,17 @@ class FantasyUser(commands.Cog):
             embeds = []
 
             for league in player_leagues:
-                exhausted_records = await self.exhaustion_repository.get_exhausted_drivers(
+                exhausted_driver_records = await self.driver_exhaustion_repository.get_exhausted_drivers(
+                    player_id=player.id,
+                    league_id=league.id
+                )
+                exhausted_constructor_records = await self.constructor_exhaustion_repository.get_exhausted_constructors(
                     player_id=player.id,
                     league_id=league.id
                 )
 
                 league_embed = discord.Embed(
-                    title="😴 Exhausted Drivers",
+                    title="😴 Exhaustions",
                     description=f"**League:** {league.name}",
                     color=discord.Color.from_rgb(
                         (league.embed_color >> 16) & 0xFF,
@@ -2830,18 +2836,27 @@ class FantasyUser(commands.Cog):
                     )
                 )
 
-                if not exhausted_records:
+                if not exhausted_driver_records and not exhausted_constructor_records:
                     league_embed.add_field(
-                        name="No Exhausted Drivers",
-                        value="You have no exhausted drivers in this league.",
+                        name="No Exhaustions!",
+                        value="You currently have no exhaustions in this league.",
                         inline=False
                     )
                 else:
-                    for record in exhausted_records:
+                    for record in exhausted_driver_records:
                         driver = await self.driver_repository.get_driver_by_id(record.driver_id)
                         if driver:
                             league_embed.add_field(
                                 name=f"{driver.first_name} {driver.last_name} ({driver.code})",
+                                value=f"Used **{record.consecutive_uses}** consecutive race(s)",
+                                inline=True
+                            )
+
+                    for record in exhausted_constructor_records:
+                        constructor = await self.constructor_repository.get_constructor_by_id(record.constructor_id)
+                        if constructor:
+                            league_embed.add_field(
+                                name=f"{constructor.name}",
                                 value=f"Used **{record.consecutive_uses}** consecutive race(s)",
                                 inline=True
                             )

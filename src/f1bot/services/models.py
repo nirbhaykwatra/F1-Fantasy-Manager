@@ -127,6 +127,19 @@ class DriverExhaustion:
     updated_at: datetime
 
 @dataclass
+class ConstructorExhaustion:
+    """Tracks consecutive constructor usage for exhaustion rules"""
+    id: int
+    player_id: int
+    league_id: int
+    constructor_id: int
+    last_grand_prix_id: int
+    consecutive_uses: int
+    is_exhausted: bool
+    created_at: datetime
+    updated_at: datetime
+
+@dataclass
 class Counterpick:
     """Represents a counterpick (driver ban) in a specific league"""
     id: int
@@ -1244,6 +1257,176 @@ class DriverExhaustionRepository:
                                  updated_at = NOW() \
                              """
                 await self.db.execute_query(query_init, (player_id, league_id, driver_id, grand_prix_id))
+
+
+class ConstructorExhaustionRepository:
+    """Handles all database operations for constructor exhaustion tracking"""
+
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+
+    async def get_exhausted_constructors(
+            self,
+            player_id: int,
+            league_id: int
+    ) -> List[ConstructorExhaustion]:
+        """READ: Get all exhausted constructors for a player in a league"""
+        query = """
+                SELECT id, player_id, league_id, constructor_id, last_grand_prix_id,
+                       consecutive_uses, is_exhausted, created_at, updated_at
+                FROM constructor_exhaustion
+                WHERE player_id = %s AND league_id = %s AND is_exhausted = TRUE
+                ORDER BY constructor_id
+                """
+        rows = await self.db.fetch_all(query, (player_id, league_id))
+        return [ConstructorExhaustion(*row) for row in rows]
+
+    async def get_constructor_exhaustion_status(
+            self,
+            player_id: int,
+            league_id: int,
+            constructor_id: int
+    ) -> Optional[ConstructorExhaustion]:
+        """READ: Get exhaustion status for a specific constructor"""
+        query = """
+                SELECT id, player_id, league_id, constructor_id, last_grand_prix_id,
+                       consecutive_uses, is_exhausted, created_at, updated_at
+                FROM constructor_exhaustion
+                WHERE player_id = %s AND league_id = %s AND constructor_id = %s
+                """
+        row = await self.db.fetch_one(query, (player_id, league_id, constructor_id))
+        return ConstructorExhaustion(*row) if row else None
+
+    async def get_all_exhaustion_for_player(
+            self,
+            player_id: int,
+            league_id: int
+    ) -> List[ConstructorExhaustion]:
+        """READ: Get all constructor exhaustion records for a player in a league"""
+        query = """
+                SELECT id, player_id, league_id, constructor_id, last_grand_prix_id,
+                       consecutive_uses, is_exhausted, created_at, updated_at
+                FROM constructor_exhaustion
+                WHERE player_id = %s AND league_id = %s
+                ORDER BY constructor_id
+                """
+        rows = await self.db.fetch_all(query, (player_id, league_id))
+        return [ConstructorExhaustion(*row) for row in rows]
+
+    async def update_exhaustion_on_deadline(
+            self,
+            player_id: int,
+            league_id: int,
+            grand_prix_id: int
+    ) -> None:
+        """
+        Update constructor exhaustion status after a draft deadline passes.
+        This should be called when points are calculated.
+
+        Args:
+            player_id: Player ID
+            league_id: League ID
+            grand_prix_id: Grand Prix ID (the one that just had its deadline pass)
+        """
+        query_get_draft = """
+                          SELECT constructor_id
+                          FROM drafts
+                          WHERE player_id = %s
+                            AND league_id = %s
+                            AND grand_prix_id = %s
+                          """
+        draft_row = await self.db.fetch_one(query_get_draft, (player_id, league_id, grand_prix_id))
+
+        if not draft_row:
+            return
+
+        constructor_id = draft_row[0]
+
+        # Get current GP round number
+        query_gp = "SELECT round_number, season_id FROM grands_prix WHERE id = %s"
+        gp_row = await self.db.fetch_one(query_gp, (grand_prix_id,))
+        if not gp_row:
+            return
+
+        current_round = gp_row[0]
+        season_id = gp_row[1]
+
+        # Get previous GP for this league
+        query_prev_gp = """
+                        SELECT id, round_number
+                        FROM grands_prix
+                        WHERE season_id = %s
+                          AND round_number = %s
+                        """
+        prev_gp_row = await self.db.fetch_one(query_prev_gp, (season_id, current_round - 1))
+
+        if prev_gp_row:
+            prev_gp_id = prev_gp_row[0]
+
+            # Get previous draft's constructor
+            prev_draft_row = await self.db.fetch_one(query_get_draft, (player_id, league_id, prev_gp_id))
+
+            if prev_draft_row:
+                prev_constructor_id = prev_draft_row[0]
+
+                if constructor_id == prev_constructor_id:
+                    # Constructor used in consecutive races - increment/mark exhausted
+                    query_upsert = """
+                                   INSERT INTO constructor_exhaustion
+                                   (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses,
+                                    is_exhausted, updated_at)
+                                   VALUES (%s, %s, %s, %s, 2, TRUE, NOW())
+                                   ON CONFLICT (player_id, league_id, constructor_id)
+                                   DO UPDATE SET
+                                       consecutive_uses = constructor_exhaustion.consecutive_uses + 1,
+                                       is_exhausted = TRUE,
+                                       last_grand_prix_id = EXCLUDED.last_grand_prix_id,
+                                       updated_at = NOW()
+                                   """
+                    await self.db.execute_query(query_upsert, (player_id, league_id, constructor_id, grand_prix_id))
+                else:
+                    # Constructor NOT used consecutively - reset previous, init current
+                    query_reset = """
+                                  INSERT INTO constructor_exhaustion
+                                  (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses,
+                                   is_exhausted, updated_at)
+                                  VALUES (%s, %s, %s, %s, 1, FALSE, NOW())
+                                  ON CONFLICT (player_id, league_id, constructor_id)
+                                  DO UPDATE SET
+                                      consecutive_uses = 1,
+                                      is_exhausted = FALSE,
+                                      last_grand_prix_id = EXCLUDED.last_grand_prix_id,
+                                      updated_at = NOW()
+                                  """
+                    await self.db.execute_query(query_reset, (player_id, league_id, constructor_id, grand_prix_id))
+
+                # Reset exhaustion for constructors NOT in current draft
+                query_reset_unused = """
+                                     UPDATE constructor_exhaustion
+                                     SET consecutive_uses = 0,
+                                         is_exhausted     = FALSE,
+                                         updated_at       = NOW()
+                                     WHERE player_id = %s
+                                       AND league_id = %s
+                                       AND constructor_id != %s
+                                       AND is_exhausted = TRUE
+                                     """
+                await self.db.execute_query(query_reset_unused, (player_id, league_id, constructor_id))
+        else:
+            # First GP - initialize exhaustion
+            query_init = """
+                         INSERT INTO constructor_exhaustion
+                         (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses,
+                          is_exhausted, updated_at)
+                         VALUES (%s, %s, %s, %s, 1, FALSE, NOW())
+                         ON CONFLICT (player_id, league_id, constructor_id)
+                         DO UPDATE SET
+                             consecutive_uses = 1,
+                             is_exhausted = FALSE,
+                             last_grand_prix_id = EXCLUDED.last_grand_prix_id,
+                             updated_at = NOW()
+                         """
+            await self.db.execute_query(query_init, (player_id, league_id, constructor_id, grand_prix_id))
 
 
 class CounterpickRepository:
