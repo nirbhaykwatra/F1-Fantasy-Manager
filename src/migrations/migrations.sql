@@ -908,6 +908,93 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION update_driver_exhaustion IS 'Updates driver exhaustion status after a draft is submitted';
 
+CREATE OR REPLACE FUNCTION check_driver_exhaustion_integrity()
+RETURNS TRIGGER AS $$
+DECLARE
+    prev_gp_id INTEGER;
+    prev_draft_exists BOOLEAN;
+BEGIN
+    -- Only care about rows being marked as exhausted
+    IF NEW.is_exhausted = FALSE THEN
+        RETURN NEW;
+    END IF;
+
+    -- Find the GP before last_grand_prix_id
+    SELECT id INTO prev_gp_id
+    FROM grands_prix
+    WHERE season_id = (SELECT season_id FROM grands_prix WHERE id = NEW.last_grand_prix_id)
+      AND round_number = (
+          SELECT round_number - 1 FROM grands_prix WHERE id = NEW.last_grand_prix_id
+      );
+
+    -- If there's no previous GP, exhaustion on round 1 is invalid
+    IF prev_gp_id IS NULL THEN
+        RAISE EXCEPTION 'Cannot exhaust a driver on the first GP of the season';
+    END IF;
+
+    -- Check a draft actually existed for the previous GP
+    SELECT EXISTS (
+        SELECT 1 FROM drafts
+        WHERE player_id = NEW.player_id
+          AND league_id = NEW.league_id
+          AND grand_prix_id = prev_gp_id
+          AND (driver1_id = NEW.driver_id OR driver2_id = NEW.driver_id
+               OR driver3_id = NEW.driver_id OR wildcard_id = NEW.driver_id)
+    ) INTO prev_draft_exists;
+
+    IF NOT prev_draft_exists THEN
+        RAISE EXCEPTION
+            'Driver % cannot be exhausted: no draft for them in the previous GP (id=%)',
+            NEW.driver_id, prev_gp_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION check_constructor_exhaustion_integrity()
+RETURNS TRIGGER AS $$
+DECLARE
+    prev_gp_id INTEGER;
+    prev_draft_exists BOOLEAN;
+BEGIN
+    -- Only care about rows being marked as exhausted
+    IF NEW.is_exhausted = FALSE THEN
+        RETURN NEW;
+    END IF;
+
+    -- Find the GP before last_grand_prix_id
+    SELECT id INTO prev_gp_id
+    FROM grands_prix
+    WHERE season_id = (SELECT season_id FROM grands_prix WHERE id = NEW.last_grand_prix_id)
+      AND round_number = (
+          SELECT round_number - 1 FROM grands_prix WHERE id = NEW.last_grand_prix_id
+      );
+
+    -- If there's no previous GP, exhaustion on round 1 is invalid
+    IF prev_gp_id IS NULL THEN
+        RAISE EXCEPTION 'Cannot exhaust a constructor on the first GP of the season';
+    END IF;
+
+    -- Check a draft actually existed for the previous GP with this constructor
+    SELECT EXISTS (
+        SELECT 1 FROM drafts
+        WHERE player_id = NEW.player_id
+          AND league_id = NEW.league_id
+          AND grand_prix_id = prev_gp_id
+          AND constructor_id = NEW.constructor_id
+    ) INTO prev_draft_exists;
+
+    IF NOT prev_draft_exists THEN
+        RAISE EXCEPTION
+            'Constructor % cannot be exhausted: no draft for them in the previous GP (id=%)',
+            NEW.constructor_id, prev_gp_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ============================================================
 -- TRIGGERS
 -- ============================================================
@@ -966,6 +1053,16 @@ CREATE TRIGGER trg_drafts_validate_rules_update
         OLD.wildcard_id IS DISTINCT FROM NEW.wildcard_id
     )
     EXECUTE FUNCTION validate_draft_rules();
+
+CREATE TRIGGER enforce_driver_exhaustion_integrity
+    BEFORE INSERT OR UPDATE ON driver_exhaustion
+    FOR EACH ROW
+    EXECUTE FUNCTION check_driver_exhaustion_integrity();
+
+CREATE TRIGGER enforce_constructor_exhaustion_integrity
+    BEFORE INSERT OR UPDATE ON constructor_exhaustion
+    FOR EACH ROW
+    EXECUTE FUNCTION check_constructor_exhaustion_integrity();
 
 -- -- Update exhaustion tracking after successful draft
 -- CREATE TRIGGER trg_drafts_update_exhaustion

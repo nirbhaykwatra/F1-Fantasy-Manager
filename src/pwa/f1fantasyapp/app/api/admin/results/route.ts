@@ -51,10 +51,9 @@ export async function POST(request: NextRequest) {
                 }
             }
 
-            await client.query('COMMIT');
+            await scoringService.calculatePointsForGrandPrix(grand_prix_id, league_id, client);
 
-            // Calculate points once all sessions are stored
-            await scoringService.calculatePointsForGrandPrix(grand_prix_id, league_id);
+            await client.query('COMMIT');
 
             return NextResponse.json({
                 success: true,
