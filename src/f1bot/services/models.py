@@ -1241,6 +1241,17 @@ class DriverExhaustionRepository:
                                        AND is_exhausted = TRUE \
                                      """
                 await self.db.execute_query(query_reset_unused, (player_id, league_id, driver_ids))
+            else:
+                # No draft last GP — treat like a fresh start, reset all exhaustion
+                query_reset_all = """
+                                  UPDATE driver_exhaustion
+                                  SET consecutive_uses = 1,
+                                      is_exhausted     = FALSE,
+                                      updated_at       = NOW()
+                                  WHERE player_id = %s \
+                                    AND league_id = %s \
+                                  """
+                await self.db.execute_query(query_reset_all, (player_id, league_id))
         else:
             # First GP - initialize exhaustion
             for driver_id in driver_ids:

@@ -200,13 +200,15 @@ export class ScoringService {
     // Main function to calculate points for all players in a league for a specific GP
     async calculatePointsForGrandPrix(
         grandPrixId: number,
-        leagueId: number
+        leagueId: number,
+        existingClient?: any
     ): Promise<void> {
-        // Start a database transaction - if anything fails, all changes are rolled back
-        const client = await pool.connect();
+        // Use provided client (caller owns the transaction) or create our own
+        const client = existingClient ?? await pool.connect();
+        const ownsTransaction = !existingClient;
 
         try {
-            await client.query('BEGIN');
+            if (ownsTransaction) await client.query('BEGIN');
 
             // 1. Get the season ID for this Grand Prix
             const seasonResult = await client.query(
@@ -297,14 +299,14 @@ export class ScoringService {
             );
 
             // Commit all changes to the database
-            await client.query('COMMIT');
+            if (ownsTransaction) await client.query('COMMIT');
         } catch (error) {
             // If anything goes wrong, undo all changes
-            await client.query('ROLLBACK');
+            if (ownsTransaction) await client.query('ROLLBACK');
             throw error;
         } finally {
-            // Always release the database connection back to the pool
-            client.release();
+            // Only release if we created the client
+            if (ownsTransaction) client.release();
         }
     }
 
@@ -824,7 +826,8 @@ export class ScoringService {
 
         if (prevGpResult.rows.length === 0) {
             // First GP of season - initialize exhaustion tracking
-            await client.query(`INSERT INTO constructor_exhaustion 
+            await client.query(
+                `INSERT INTO constructor_exhaustion 
            (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses, is_exhausted)
            VALUES ($1, $2, $3, $4, 1, FALSE)
            ON CONFLICT (player_id, league_id, constructor_id)
@@ -833,8 +836,8 @@ export class ScoringService {
              is_exhausted = FALSE,
              last_grand_prix_id = $4,
              updated_at = NOW()`,
-                    [draft.player_id, draft.league_id, constructorId, draft.grand_prix_id]
-                );
+                [draft.player_id, draft.league_id, constructorId, draft.grand_prix_id]
+            );
             return;
         }
 
@@ -846,13 +849,15 @@ export class ScoringService {
             [draft.player_id, draft.league_id, prevGpId]
         );
 
-        if (prevDraftResult.rows.length > 0) {
-            const prevConstructorId = prevDraftResult.rows[0].constructor_id;
+        // Resolve previous constructor, or null if no draft last GP
+        const prevConstructorId: number | null = prevDraftResult.rows.length > 0
+            ? prevDraftResult.rows[0].constructor_id
+            : null; // No draft last GP — treat as non-consecutive
 
-            const wasUsedBefore = prevConstructorId === constructorId;
+        const wasUsedBefore = prevConstructorId === constructorId;
 
-            await client.query(
-                `INSERT INTO constructor_exhaustion 
+        await client.query(
+            `INSERT INTO constructor_exhaustion 
        (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses, is_exhausted)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (player_id, league_id, constructor_id)
@@ -861,16 +866,28 @@ export class ScoringService {
          is_exhausted = $6,
          last_grand_prix_id = $4,
          updated_at = NOW()`,
-                [
-                    draft.player_id,
-                    draft.league_id,
-                    constructorId,
-                    draft.grand_prix_id,
-                    wasUsedBefore ? 2 : 1,
-                    wasUsedBefore // Exhausted if used 2 GPs in a row
-                ]
-            );
-        }
+            [
+                draft.player_id,
+                draft.league_id,
+                constructorId,
+                draft.grand_prix_id,
+                wasUsedBefore ? 2 : 1,
+                wasUsedBefore
+            ]
+        );
+
+        // Reset exhaustion for constructors NOT used in the current draft
+        await client.query(
+            `UPDATE constructor_exhaustion
+             SET consecutive_uses = 0,
+                 is_exhausted = FALSE,
+                 updated_at = NOW()
+             WHERE player_id = $1
+               AND league_id = $2
+               AND constructor_id != $3
+               AND is_exhausted = TRUE`,
+            [draft.player_id, draft.league_id, constructorId]
+        );
     }
 }
 

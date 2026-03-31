@@ -205,8 +205,8 @@ class DraftService:
             driver1_id: int,
             driver2_id: int,
             driver3_id: int,
-            constructor_id: int,
-            wildcard_id: int
+            wildcard_id: int,
+            constructor_id: int
     ) -> Tuple[bool, Optional[str], List[str]]:
         """
         Validate that no driver or constructor is being drafted for more than 2 consecutive GPs in advance.
@@ -461,7 +461,7 @@ class DraftService:
             # 6. Validate PROSPECTIVE exhaustion (no more than 2 consecutive in advance)
             is_valid, error, _ = await self.validate_prospective_exhaustion(
                 player_id, league_id, grand_prix_id,
-                driver1_id, driver2_id, driver3_id, wildcard_id
+                driver1_id, driver2_id, driver3_id, wildcard_id, constructor_id
             )
             if not is_valid:
                 return None, error
