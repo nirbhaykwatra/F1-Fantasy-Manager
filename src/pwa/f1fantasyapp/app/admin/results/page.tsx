@@ -155,6 +155,40 @@ export default function AdminResultsPage() {
         }
     };
 
+    const handleRecalculate = async () => {
+        if (!selectedGP) {
+            setMessage({ type: 'error', text: 'Please select a Grand Prix to recalculate' });
+            return;
+        }
+
+        setLoading(true);
+        setMessage(null);
+
+        try {
+            const response = await fetch('/api/admin/results/recalculate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    grand_prix_id: selectedGP,
+                    league_id: leagueId,
+                }),
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                setMessage({ type: 'success', text: 'Scores recalculated successfully from existing race results!' });
+            } else {
+                setMessage({ type: 'error', text: data.error || 'Failed to recalculate scores' });
+            }
+        } catch (error) {
+            console.error('Error recalculating scores:', error);
+            setMessage({ type: 'error', text: 'An error occurred while recalculating scores' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const activeSessionList = SESSION_TYPES.filter(s => enabledSessions[s]);
 
     return (
@@ -307,6 +341,29 @@ export default function AdminResultsPage() {
                         </button>
                     </div>
                 </form>
+
+                {/* Recalculate Button - Separate from form */}
+                <div className="mt-6 bg-white rounded-lg shadow-md p-6">
+                    <h2 className="text-xl font-semibold mb-4 text-gray-900">
+                        🔄 Recalculate Scores
+                    </h2>
+                    <p className="text-gray-700 mb-4">
+                        Use this to recalculate player scores from existing race results in the database.
+                        This is useful if scoring rules have changed or if you need to fix calculation errors.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={handleRecalculate}
+                        disabled={loading || !selectedGP}
+                        className={`px-6 py-3 rounded-lg font-semibold text-white transition-colors ${
+                            loading || !selectedGP
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
+                    >
+                        {loading ? 'Recalculating...' : 'Recalculate Scores for Selected GP'}
+                    </button>
+                </div>
 
                 {/* Info Box */}
                 <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-6">
