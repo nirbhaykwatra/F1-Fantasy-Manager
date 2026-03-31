@@ -729,21 +729,29 @@ export class ScoringService {
 
         // Get the current GP's round number
         const gpResult = await client.query(
-            'SELECT round_number FROM grands_prix WHERE id = $1',
+            'SELECT round_number, season_id FROM grands_prix WHERE id = $1',
             [draft.grand_prix_id]
         );
         const currentRound = gpResult.rows[0].round_number;
+        const seasonId = gpResult.rows[0].season_id;
 
-        // Get previous GP
-        const prevGpResult = await client.query(
-            `SELECT id FROM grands_prix 
-       WHERE season_id = (SELECT season_id FROM grands_prix WHERE id = $1)
-       AND round_number = $2`,
-            [draft.grand_prix_id, currentRound - 1]
+        // Find the most recent previous GP (in the same season) that has a draft for this player,
+        // skipping over any rounds with no draft (i.e. skipped races)
+        const prevDraftResult = await client.query(
+            `SELECT d.grand_prix_id, d.driver1_id, d.driver2_id, d.driver3_id, d.wildcard_id
+             FROM drafts d
+             JOIN grands_prix gp ON gp.id = d.grand_prix_id
+             WHERE d.player_id = $1
+               AND d.league_id = $2
+               AND gp.season_id = $3
+               AND gp.round_number < $4
+             ORDER BY gp.round_number DESC
+             LIMIT 1`,
+            [draft.player_id, draft.league_id, seasonId, currentRound]
         );
 
-        if (prevGpResult.rows.length === 0) {
-            // First GP of season - initialize exhaustion tracking
+        if (prevDraftResult.rows.length === 0) {
+            // First played GP of season - initialize exhaustion tracking
             for (const driverId of driverIds) {
                 await client.query(
                     `INSERT INTO driver_exhaustion 
@@ -761,29 +769,32 @@ export class ScoringService {
             return;
         }
 
-        const prevGpId = prevGpResult.rows[0].id;
+        const prev = prevDraftResult.rows[0];
 
-        // Check which drivers were used in previous GP
-        const prevDraftResult = await client.query(
-            `SELECT driver1_id, driver2_id, driver3_id, wildcard_id
-       FROM drafts
-       WHERE player_id = $1 AND league_id = $2 AND grand_prix_id = $3`,
-            [draft.player_id, draft.league_id, prevGpId]
+        // Check if the previous draft was for the immediately preceding round,
+        // or if there were skipped rounds in between
+        const prevGpRoundResult = await client.query(
+            'SELECT round_number FROM grands_prix WHERE id = $1',
+            [prev.grand_prix_id]
         );
+        const prevRound = prevGpRoundResult.rows[0].round_number;
+        const isConsecutive = prevRound === currentRound - 1;
 
-        if (prevDraftResult.rows.length > 0) {
-            const prevDriverIds = [
-                prevDraftResult.rows[0].driver1_id,
-                prevDraftResult.rows[0].driver2_id,
-                prevDraftResult.rows[0].driver3_id,
-                prevDraftResult.rows[0].wildcard_id
-            ];
+        const prevDriverIds = [
+            prev.driver1_id,
+            prev.driver2_id,
+            prev.driver3_id,
+            prev.wildcard_id
+        ];
 
-            for (const driverId of driverIds) {
-                const wasUsedBefore = prevDriverIds.includes(driverId);
+        for (const driverId of driverIds) {
+            // A driver is only consecutive if:
+            // 1. They were used in the previous played race, AND
+            // 2. That race was the immediately preceding round (no skipped race between them)
+            const wasUsedBefore = isConsecutive && prevDriverIds.includes(driverId);
 
-                await client.query(
-                    `INSERT INTO driver_exhaustion 
+            await client.query(
+                `INSERT INTO driver_exhaustion 
            (player_id, league_id, driver_id, last_grand_prix_id, consecutive_uses, is_exhausted)
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (player_id, league_id, driver_id)
@@ -792,16 +803,15 @@ export class ScoringService {
              is_exhausted = $6,
              last_grand_prix_id = $4,
              updated_at = NOW()`,
-                    [
-                        draft.player_id,
-                        draft.league_id,
-                        driverId,
-                        draft.grand_prix_id,
-                        wasUsedBefore ? 2 : 1,
-                        wasUsedBefore // Exhausted if used 2 GPs in a row
-                    ]
-                );
-            }
+                [
+                    draft.player_id,
+                    draft.league_id,
+                    driverId,
+                    draft.grand_prix_id,
+                    wasUsedBefore ? 2 : 1,
+                    wasUsedBefore
+                ]
+            );
         }
     }
 
@@ -811,21 +821,29 @@ export class ScoringService {
 
         // Get the current GP's round number
         const gpResult = await client.query(
-            'SELECT round_number FROM grands_prix WHERE id = $1',
+            'SELECT round_number, season_id FROM grands_prix WHERE id = $1',
             [draft.grand_prix_id]
         );
         const currentRound = gpResult.rows[0].round_number;
+        const seasonId = gpResult.rows[0].season_id;
 
-        // Get previous GP
-        const prevGpResult = await client.query(
-            `SELECT id FROM grands_prix 
-       WHERE season_id = (SELECT season_id FROM grands_prix WHERE id = $1)
-       AND round_number = $2`,
-            [draft.grand_prix_id, currentRound - 1]
+        // Find the most recent previous GP (in the same season) that has a draft for this player,
+        // skipping over any rounds with no draft (i.e. skipped races)
+        const prevDraftResult = await client.query(
+            `SELECT d.grand_prix_id, d.constructor_id
+             FROM drafts d
+             JOIN grands_prix gp ON gp.id = d.grand_prix_id
+             WHERE d.player_id = $1
+               AND d.league_id = $2
+               AND gp.season_id = $3
+               AND gp.round_number < $4
+             ORDER BY gp.round_number DESC
+             LIMIT 1`,
+            [draft.player_id, draft.league_id, seasonId, currentRound]
         );
 
-        if (prevGpResult.rows.length === 0) {
-            // First GP of season - initialize exhaustion tracking
+        if (prevDraftResult.rows.length === 0) {
+            // First played GP of season - initialize exhaustion tracking
             await client.query(
                 `INSERT INTO constructor_exhaustion 
            (player_id, league_id, constructor_id, last_grand_prix_id, consecutive_uses, is_exhausted)
@@ -841,20 +859,18 @@ export class ScoringService {
             return;
         }
 
-        const prevGpId = prevGpResult.rows[0].id;
+        const prev = prevDraftResult.rows[0];
 
-        // Check which constructor was used in previous GP
-        const prevDraftResult = await client.query(
-            `SELECT constructor_id FROM drafts WHERE player_id = $1 AND league_id = $2 AND grand_prix_id = $3`,
-            [draft.player_id, draft.league_id, prevGpId]
+        // Check if the previous draft was for the immediately preceding round
+        const prevGpRoundResult = await client.query(
+            'SELECT round_number FROM grands_prix WHERE id = $1',
+            [prev.grand_prix_id]
         );
+        const prevRound = prevGpRoundResult.rows[0].round_number;
+        const isConsecutive = prevRound === currentRound - 1;
 
-        // Resolve previous constructor, or null if no draft last GP
-        const prevConstructorId: number | null = prevDraftResult.rows.length > 0
-            ? prevDraftResult.rows[0].constructor_id
-            : null; // No draft last GP — treat as non-consecutive
-
-        const wasUsedBefore = prevConstructorId === constructorId;
+        // A constructor is only consecutive if the previous race was adjacent AND it was the same constructor
+        const wasUsedBefore = isConsecutive && prev.constructor_id === constructorId;
 
         await client.query(
             `INSERT INTO constructor_exhaustion 
