@@ -771,15 +771,6 @@ export class ScoringService {
 
         const prev = prevDraftResult.rows[0];
 
-        // Check if the previous draft was for the immediately preceding round,
-        // or if there were skipped rounds in between
-        const prevGpRoundResult = await client.query(
-            'SELECT round_number FROM grands_prix WHERE id = $1',
-            [prev.grand_prix_id]
-        );
-        const prevRound = prevGpRoundResult.rows[0].round_number;
-        const isConsecutive = prevRound === currentRound - 1;
-
         const prevDriverIds = [
             prev.driver1_id,
             prev.driver2_id,
@@ -791,7 +782,7 @@ export class ScoringService {
             // A driver is only consecutive if:
             // 1. They were used in the previous played race, AND
             // 2. That race was the immediately preceding round (no skipped race between them)
-            const wasUsedBefore = isConsecutive && prevDriverIds.includes(driverId);
+            const wasUsedBefore = prevDriverIds.includes(driverId);
 
             await client.query(
                 `INSERT INTO driver_exhaustion 
@@ -861,16 +852,8 @@ export class ScoringService {
 
         const prev = prevDraftResult.rows[0];
 
-        // Check if the previous draft was for the immediately preceding round
-        const prevGpRoundResult = await client.query(
-            'SELECT round_number FROM grands_prix WHERE id = $1',
-            [prev.grand_prix_id]
-        );
-        const prevRound = prevGpRoundResult.rows[0].round_number;
-        const isConsecutive = prevRound === currentRound - 1;
-
         // A constructor is only consecutive if the previous race was adjacent AND it was the same constructor
-        const wasUsedBefore = isConsecutive && prev.constructor_id === constructorId;
+        const wasUsedBefore = prev.constructor_id === constructorId;
 
         await client.query(
             `INSERT INTO constructor_exhaustion 
