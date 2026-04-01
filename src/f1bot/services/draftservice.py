@@ -258,7 +258,8 @@ class DraftService:
             max_consecutive = 0
 
             # Scan through all rounds in order
-            for round_num in sorted(drafts_by_round.keys()):
+            sorted_rounds = sorted(drafts_by_round.keys())
+            for i, round_num in enumerate(sorted_rounds):
                 if driver_id in drafts_by_round[round_num]:
                     consecutive_count += 1
                     max_consecutive = max(max_consecutive, consecutive_count)
@@ -282,7 +283,8 @@ class DraftService:
         consecutive_count = 0
         max_consecutive = 0
 
-        for round_num in sorted(constructor_by_round.keys()):
+        sorted_rounds = sorted(constructor_by_round.keys())
+        for i, round_num in enumerate(sorted_rounds):
             if constructor_by_round[round_num] == constructor_id:
                 consecutive_count += 1
                 max_consecutive = max(max_consecutive, consecutive_count)
