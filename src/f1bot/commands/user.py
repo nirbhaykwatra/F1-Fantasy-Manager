@@ -1091,15 +1091,26 @@ class FantasyUser(commands.Cog):
                 # Get all GPs for this season to find previous and next
                 all_gps = await self.grand_prix_repository.list_grands_prix_by_season(season_id=league.season_id)
 
-                # Find the next GP and the previous completed GP
+                # Find the next upcoming GP
                 next_gp = None
-                prev_gp = None
-
                 for gp in all_gps:
                     if not gp.is_completed and next_gp is None:
                         next_gp = gp
-                    elif gp.is_completed:
-                        prev_gp = gp
+                        break
+
+                # Find the last completed GP for which this player actually has a draft
+                # (accounts for skipped/missed grands prix)
+                prev_gp = None
+                for gp in reversed(all_gps):
+                    if gp.is_completed:
+                        draft_check = await self.draft_repository.get_draft(
+                            player_id=player.id,
+                            league_id=league.id,
+                            grand_prix_id=gp.id
+                        )
+                        if draft_check:
+                            prev_gp = gp
+                            break
 
                 # Create league-specific embed
                 league_embed = discord.Embed(
