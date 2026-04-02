@@ -23,6 +23,7 @@ from f1bot.services.models import (
     DriverRepository,
     Driver,
     ConstructorRepository,
+    Constructor,
     PlayerRoundScoreRepository,
     CounterpickRepository,
     SeasonRepository,
@@ -2844,7 +2845,7 @@ class FantasyUser(commands.Cog):
                     )
                 else:
                     for record in exhausted_driver_records:
-                        driver = await self.driver_repository.get_driver_by_id(record.driver_id)
+                        driver: Driver | None = await self.driver_repository.get_driver_by_id(record.driver_id)
                         if driver:
                             league_embed.add_field(
                                 name=f"{driver.first_name} {driver.last_name} ({driver.code})",
@@ -2853,10 +2854,10 @@ class FantasyUser(commands.Cog):
                             )
 
                     for record in exhausted_constructor_records:
-                        constructor = await self.constructor_repository.get_constructor_by_id(record.constructor_id)
+                        constructor: Constructor | None = await self.constructor_repository.get_constructor_by_id(record.constructor_id)
                         if constructor:
                             league_embed.add_field(
-                                name=f"{constructor.name}",
+                                name=f"{constructor.full_name}",
                                 value=f"Used **{record.consecutive_uses}** consecutive race(s)",
                                 inline=True
                             )
