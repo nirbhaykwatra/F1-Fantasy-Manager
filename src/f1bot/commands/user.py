@@ -2777,7 +2777,7 @@ class FantasyUser(commands.Cog):
 
     @app_commands.command(name='exhausted', description='Check your exhausted drivers.')
     @app_commands.guilds(discord.Object(id=config.guild_id))
-    async def exhausted(self, interaction: discord.Interaction):
+    async def exhausted(self, interaction: discord.Interaction, user: discord.User = None):
         BotLogger.log_command_invocation(
             command_name="exhausted",
             user=interaction.user.name,
@@ -2787,12 +2787,15 @@ class FantasyUser(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
+        if user is None:
+            user = interaction.user
+
         try:
 
-            player: Optional[Player] = await self.player_repository.get_player_by_discord_id(interaction.user.id)
+            player: Optional[Player] = await self.player_repository.get_player_by_discord_id(user.id)
 
             if player is None:
-                BotLogger.log_command_error("exhausted", interaction.user.name,
+                BotLogger.log_command_error("exhausted", user.name,
                                             ValueError("Player not registered"))
                 await interaction.followup.send(
                     embed=await self.embedService.create_generic_failure_embed(
@@ -2801,10 +2804,10 @@ class FantasyUser(commands.Cog):
                 return
 
             player_leagues: List[League] = await self.player_repository.get_leagues_for_player_by_discord_id(
-                interaction.user.id)
+                user.id)
 
             if not player_leagues:
-                BotLogger.log_command_error("exhausted", interaction.user.name,
+                BotLogger.log_command_error("exhausted", user.name,
                                             ValueError("Player not in any leagues"))
                 await interaction.followup.send(
                     embed=await self.embedService.create_generic_failure_embed("You are not in any leagues!"),
@@ -2818,7 +2821,7 @@ class FantasyUser(commands.Cog):
             player_leagues = [league for league in player_leagues if league.id in guild_league_ids]
 
             if not player_leagues:
-                BotLogger.log_command_error("exhausted", interaction.user.name,
+                BotLogger.log_command_error("exhausted", user.name,
                                             ValueError("Player not in any leagues in this guild"))
                 await interaction.followup.send(
                     embed=await self.embedService.create_generic_failure_embed(
@@ -2876,18 +2879,18 @@ class FantasyUser(commands.Cog):
                 embeds.append(league_embed)
 
             if len(embeds) == 1:
-                embeds[0].set_footer(text=f"Requested by {interaction.user.display_name}",
-                                     icon_url=interaction.user.display_avatar.url)
+                embeds[0].set_footer(text=f"Requested by {user.display_name}",
+                                     icon_url=user.display_avatar.url)
                 await interaction.followup.send(embed=embeds[0], ephemeral=True)
             else:
-                view = ExhaustedPaginationView(embeds, interaction.user)
+                view = ExhaustedPaginationView(embeds, user)
                 await interaction.followup.send(embed=embeds[0], view=view, ephemeral=True)
 
-            BotLogger.log_command_success("exhausted", interaction.user.name,
+            BotLogger.log_command_success("exhausted", user.name,
                                           f"Exhausted drivers displayed across {len(embeds)} league(s)")
 
         except Exception as e:
-            BotLogger.log_command_error("exhausted", interaction.user.name, e)
+            BotLogger.log_command_error("exhausted", user.name, e)
             await interaction.followup.send(
                 embed=await self.embedService.create_generic_failure_embed(f"An error occurred: {str(e)}"),
                 ephemeral=True)
