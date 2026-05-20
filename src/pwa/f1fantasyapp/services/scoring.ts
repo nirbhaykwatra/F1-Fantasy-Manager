@@ -804,6 +804,19 @@ export class ScoringService {
                 ]
             );
         }
+
+        // Reset exhaustion for drivers NOT in the current draft (they are sitting out)
+        await client.query(
+            `UPDATE driver_exhaustion
+             SET consecutive_uses = 0,
+                 is_exhausted = FALSE,
+                 updated_at = NOW()
+             WHERE player_id = $1
+               AND league_id = $2
+               AND driver_id != ALL($3)
+               AND is_exhausted = TRUE`,
+            [draft.player_id, draft.league_id, driverIds]
+        );
     }
 
     // Update constructor exhaustion status after calculating points
