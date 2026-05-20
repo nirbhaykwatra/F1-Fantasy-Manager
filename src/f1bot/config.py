@@ -40,7 +40,7 @@ def load_config() -> Config:
     db_user = os.getenv("SQLUSER")
     db_pass = os.getenv("SQLPASS")
     db_host = os.getenv("SQLHOST", "localhost")
-    db_name = os.getenv("SQLDB", "f1fantasy")
+    db_name = os.getenv("SQLDB", "f1fantasy") if mode == "PROD" else os.getenv("SQLDBDEV", "f1fantasytest")
     database_url = f"postgresql://{db_user}:{db_pass}@{db_host}/{db_name}"
     weather_api_key = os.getenv("WEATHER_API_KEY")
 
