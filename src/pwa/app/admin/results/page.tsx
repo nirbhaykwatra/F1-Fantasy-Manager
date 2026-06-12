@@ -189,6 +189,60 @@ export default function AdminResultsPage() {
         }
     };
 
+    const handleLoadExisting = async () => {
+        if (!selectedGP) {
+            setMessage({ type: 'error', text: 'Please select a Grand Prix to load results for' });
+            return;
+        }
+
+        setLoading(true);
+        setMessage(null);
+
+        try {
+            const response = await fetch(`/api/admin/results?grand_prix_id=${selectedGP}`);
+            const data = await response.json();
+
+            if (!data.success || !data.results || data.results.length === 0) {
+                setMessage({ type: 'error', text: 'No existing results found for this Grand Prix' });
+                return;
+            }
+
+            // Group results by session type
+            const bySession: Record<string, { position: number; driver_id: number }[]> = {};
+            for (const row of data.results) {
+                if (!bySession[row.session_type]) bySession[row.session_type] = [];
+                bySession[row.session_type].push({ position: row.position, driver_id: row.driver_id });
+            }
+
+            // Enable the sessions that have results and populate the grids
+            const newEnabled = { ...enabledSessions };
+            const newResults = { ...sessionResults };
+
+            for (const session of SESSION_TYPES) {
+                if (bySession[session]) {
+                    newEnabled[session] = true;
+                    const empty = createEmptyResults();
+                    for (const entry of bySession[session]) {
+                        const idx = empty.findIndex(r => r.position === entry.position);
+                        if (idx !== -1) empty[idx] = { position: entry.position, driver_id: entry.driver_id };
+                    }
+                    newResults[session] = empty;
+                }
+            }
+
+            setEnabledSessions(newEnabled);
+            setSessionResults(newResults);
+
+            const sessionNames = Object.keys(bySession).map(s => s.replace('_', ' ')).join(', ');
+            setMessage({ type: 'success', text: `Loaded existing results for: ${sessionNames}` });
+        } catch (error) {
+            console.error('Error loading existing results:', error);
+            setMessage({ type: 'error', text: 'An error occurred while loading existing results' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const activeSessionList = SESSION_TYPES.filter(s => enabledSessions[s]);
 
     return (
@@ -230,6 +284,23 @@ export default function AdminResultsPage() {
                                 </option>
                             ))}
                         </select>
+                        <div className="mt-3">
+                            <button
+                                type="button"
+                                onClick={handleLoadExisting}
+                                disabled={loading || !selectedGP}
+                                className={`px-4 py-2 rounded-lg font-medium text-white text-sm transition-colors ${
+                                    loading || !selectedGP
+                                        ? 'bg-gray-400 cursor-not-allowed'
+                                        : 'bg-amber-600 hover:bg-amber-700'
+                                }`}
+                            >
+                                {loading ? 'Loading...' : '📥 Load Existing Results'}
+                            </button>
+                            <span className="ml-3 text-xs text-gray-500">
+                                    Populate the grid from results already stored in the database
+                                </span>
+                        </div>
                     </div>
 
                     {/* Session Toggles */}
