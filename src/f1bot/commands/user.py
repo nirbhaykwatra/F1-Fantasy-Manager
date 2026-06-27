@@ -397,7 +397,8 @@ class FantasyUser(commands.Cog):
                 driver3_id=driver3_id,
                 wildcard_id=wildcard_id,
                 constructor_id=constructor_id,
-                is_auto_assigned=False
+                is_auto_assigned=False,
+                is_admin_draft=False
             )
 
             if error:
@@ -550,7 +551,8 @@ class FantasyUser(commands.Cog):
                 driver3_id=driver3_id,
                 wildcard_id=wildcard_id,
                 constructor_id=constructor_id,
-                is_auto_assigned=False
+                is_auto_assigned=False,
+                is_admin_draft=True
             )
 
             if error:

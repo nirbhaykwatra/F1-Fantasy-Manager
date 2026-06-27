@@ -411,7 +411,8 @@ class DraftService:
             driver3_id: int,
             wildcard_id: int,
             constructor_id: int,
-            is_auto_assigned: bool = False
+            is_auto_assigned: bool = False,
+            is_admin_draft: bool = False
     ) -> Tuple[Optional[Draft], Optional[str]]:
         """
         Submit or update a draft with comprehensive validation
@@ -420,10 +421,11 @@ class DraftService:
             Tuple of (Draft object or None, error_message or None)
         """
         try:
-            # 1. Check draft deadline
-            is_valid, error = await self.validate_draft_deadline(grand_prix_id)
-            if not is_valid:
-                return None, error
+            if not is_admin_draft:
+                # 1. Check draft deadline
+                is_valid, error = await self.validate_draft_deadline(grand_prix_id)
+                if not is_valid:
+                    return None, error
 
             # 2. Validate unique drivers
             is_valid, error = await self.validate_unique_drivers(
