@@ -15,6 +15,7 @@ interface Driver {
     last_name: string;
     constructor: string;
     color_hex: string;
+    ergast_id: string;
 }
 
 interface GrandPrix {
@@ -46,6 +47,7 @@ export default function AdminResultsPage() {
     const [grandsPrix, setGrandsPrix] = useState<GrandPrix[]>([]);
     const [drivers, setDrivers] = useState<Driver[]>([]);
     const [selectedGP, setSelectedGP] = useState<number | null>(null);
+
     // Which sessions are enabled
     const [enabledSessions, setEnabledSessions] = useState<Record<SessionType, boolean>>({
         race: true,
@@ -63,6 +65,7 @@ export default function AdminResultsPage() {
         sprint_qualifying: createEmptyResults(),
     });
     const [loading, setLoading] = useState(false);
+    const [jolpicaLoading, setJolpicaLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     useEffect(() => {
@@ -243,6 +246,130 @@ export default function AdminResultsPage() {
         }
     };
 
+    const handleFetchFromJolpica = async () => {
+        if (!selectedGP) {
+            setMessage({ type: 'error', text: 'Please select a Grand Prix first' });
+            return;
+        }
+
+        const gp = grandsPrix.find(g => g.id === selectedGP);
+        if (!gp) {
+            setMessage({ type: 'error', text: 'Selected Grand Prix not found' });
+            return;
+        }
+
+        setJolpicaLoading(true);
+        setMessage(null);
+
+        const JOLPICA_BASE = 'https://api.jolpi.ca/ergast/f1';
+        const year = new Date().getFullYear();
+        const round = gp.round_number;
+
+        // Build a lookup map from ergast_id -> local driver id
+        const ergastToLocalId = new Map<string, number>(
+            drivers.map(d => [d.ergast_id, d.id])
+        );
+
+        const newEnabled = { ...enabledSessions };
+        const newResults: SessionResults = {
+            race: createEmptyResults(),
+            qualifying: createEmptyResults(),
+            sprint: createEmptyResults(),
+            sprint_qualifying: createEmptyResults(),
+        };
+
+        const fetchedSessions: string[] = [];
+        const errors: string[] = [];
+
+        // Helper to fetch one session
+        const fetchSession = async (
+            endpoint: string,
+            sessionKey: SessionType,
+            extractResults: (race: Record<string, unknown>) => { position: number; driverId: string }[]
+        ) => {
+            try {
+                const res = await fetch(`${JOLPICA_BASE}/${year}/${round}/${endpoint}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const races: Record<string, unknown>[] = data?.MRData?.RaceTable?.Races ?? [];
+                if (races.length === 0) return;
+
+                const rawResults = extractResults(races[0]);
+                if (rawResults.length === 0) return;
+
+                const grid = createEmptyResults();
+                let matched = 0;
+                for (const { position, driverId } of rawResults) {
+                    const localId = ergastToLocalId.get(driverId);
+                    if (localId === undefined) continue;
+                    const idx = grid.findIndex(r => r.position === position);
+                    if (idx !== -1) {
+                        grid[idx] = { position, driver_id: localId };
+                        matched++;
+                    }
+                }
+
+                if (matched > 0) {
+                    newResults[sessionKey] = grid;
+                    newEnabled[sessionKey] = true;
+                    fetchedSessions.push(sessionKey.replace('_', ' '));
+                } else {
+                    errors.push(`${sessionKey}: no drivers matched local roster`);
+                }
+            } catch {
+                errors.push(`${sessionKey}: fetch failed`);
+            }
+        };
+
+        // Race results: Results[i].position / Results[i].Driver.driverId
+        await fetchSession('results.json', 'race', (race) => {
+            const results = (race.Results as Record<string, unknown>[]) ?? [];
+            return results.map(r => ({
+                position: parseInt(r.position as string, 10),
+                driverId: (r.Driver as Record<string, string>)?.driverId ?? '',
+            }));
+        });
+
+        // Qualifying results: QualifyingResults[i].position / QualifyingResults[i].Driver.driverId
+        await fetchSession('qualifying.json', 'qualifying', (race) => {
+            const results = (race.QualifyingResults as Record<string, unknown>[]) ?? [];
+            return results.map(r => ({
+                position: parseInt(r.position as string, 10),
+                driverId: (r.Driver as Record<string, string>)?.driverId ?? '',
+            }));
+        });
+
+        // Sprint results (only for sprint weekends)
+        if (gp.event_format === 'sprint_qualifying') {
+            await fetchSession('sprint.json', 'sprint', (race) => {
+                const results = (race.SprintResults as Record<string, unknown>[]) ?? [];
+                return results.map(r => ({
+                    position: parseInt(r.position as string, 10),
+                    driverId: (r.Driver as Record<string, string>)?.driverId ?? '',
+                }));
+            });
+            // Note: sprint_qualifying session is not yet available via Jolpica API
+        }
+
+        if (fetchedSessions.length === 0) {
+            const detail = errors.length > 0 ? ` (${errors.join('; ')})` : '';
+            setMessage({ type: 'error', text: `No results found on Jolpica for Round ${round} of ${year}${detail}` });
+        } else {
+            setEnabledSessions(newEnabled);
+            setSessionResults(newResults);
+            const detail = errors.length > 0 ? ` (skipped: ${errors.join('; ')})` : '';
+            setMessage({
+                type: 'success',
+                text: `Fetched from Jolpica: ${fetchedSessions.join(', ')}${detail}`,
+            });
+            // Switch to the first fetched session tab
+            const firstFetched = fetchedSessions[0].replace(' ', '_') as SessionType;
+            if (SESSION_TYPES.includes(firstFetched)) setActiveTab(firstFetched);
+        }
+
+        setJolpicaLoading(false);
+    };
+
     const activeSessionList = SESSION_TYPES.filter(s => enabledSessions[s]);
 
     return (
@@ -284,23 +411,36 @@ export default function AdminResultsPage() {
                                 </option>
                             ))}
                         </select>
-                        <div className="mt-3">
+                        <div className="mt-3 flex flex-wrap gap-3 items-center">
                             <button
                                 type="button"
                                 onClick={handleLoadExisting}
-                                disabled={loading || !selectedGP}
+                                disabled={loading || jolpicaLoading || !selectedGP}
                                 className={`px-4 py-2 rounded-lg font-medium text-white text-sm transition-colors ${
-                                    loading || !selectedGP
+                                    loading || jolpicaLoading || !selectedGP
                                         ? 'bg-gray-400 cursor-not-allowed'
                                         : 'bg-amber-600 hover:bg-amber-700'
                                 }`}
                             >
                                 {loading ? 'Loading...' : '📥 Load Existing Results'}
                             </button>
-                            <span className="ml-3 text-xs text-gray-500">
-                                    Populate the grid from results already stored in the database
-                                </span>
+                            <button
+                                type="button"
+                                onClick={handleFetchFromJolpica}
+                                disabled={loading || jolpicaLoading || !selectedGP}
+                                className={`px-4 py-2 rounded-lg font-medium text-white text-sm transition-colors ${
+                                    loading || jolpicaLoading || !selectedGP
+                                        ? 'bg-gray-400 cursor-not-allowed'
+                                        : 'bg-purple-600 hover:bg-purple-700'
+                                }`}
+                            >
+                                {jolpicaLoading ? '⏳ Fetching...' : '🌐 Fetch from Jolpica'}
+                            </button>
+                            <span className="text-xs text-gray-500">
+                                Auto-populate from the official Jolpica F1 API
+                            </span>
                         </div>
+
                     </div>
 
                     {/* Session Toggles */}

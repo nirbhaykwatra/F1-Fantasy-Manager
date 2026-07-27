@@ -23,6 +23,7 @@ export async function GET(request: NextRequest) {
         d.number,
         d.first_name,
         d.last_name,
+        d.ergast_id,
         c.short_name as constructor,
         c.color_hex
       FROM drivers d
