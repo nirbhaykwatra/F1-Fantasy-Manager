@@ -6,7 +6,9 @@ from f1bot.services.models import (
     GrandPrixRepository, CounterpickRepository, DriverExhaustionRepository,
     DatabaseManager, ConstructorExhaustionRepository
 )
+from f1bot.utils.logger import BotLogger
 
+logger = BotLogger().get_logger("services.draftservice")
 
 class DraftValidationError(Exception):
     """Custom exception for draft validation errors"""
@@ -210,35 +212,43 @@ class DraftService:
     ) -> Tuple[bool, Optional[str], List[str]]:
         """
         Validate that no driver or constructor is being drafted for more than 2 consecutive GPs in advance.
-        This checks prospective drafts (not yet locked in) to prevent illegal advance drafting.
+        Only considers prospective (not yet completed) drafts — past history is handled by the
+        exhaustion table and validate_driver_exhaustion / validate_constructor_exhaustion.
 
         Returns:
             Tuple of (is_valid, error_message, list_of_violating_names)
         """
         driver_ids = [driver1_id, driver2_id, driver3_id, wildcard_id]
 
-        # Get the current grand prix round number
+        logger.debug(
+            f"Validating prospective exhaustion | player={player_id} league={league_id} "
+            f"gp={grand_prix_id} drivers={driver_ids} constructor={constructor_id}"
+        )
+
         current_gp = await self.grand_prix_repo.get_grand_prix_by_id(grand_prix_id)
         if not current_gp:
+            logger.warning(
+                f"Prospective exhaustion check aborted: Grand Prix {grand_prix_id} not found "
+                f"| player={player_id} league={league_id}"
+            )
             return False, "Grand Prix not found", []
 
         current_round = current_gp.round_number
         season_id = current_gp.season_id
+        logger.debug(f"Current GP resolved | gp={grand_prix_id} round={current_round} season={season_id}")
 
-        # Get all grands prix for the season, ordered by round
-        all_gps = await self.grand_prix_repo.list_grands_prix_by_season(season_id)
-        gp_map = {gp.round_number: gp for gp in all_gps}
-
-        # Get all existing drafts for this player in this league for the season
         existing_drafts = await self.draft_repo.list_drafts_for_player_in_league(player_id, league_id)
+        logger.debug(
+            f"Loaded {len(existing_drafts)} existing draft(s) | player={player_id} league={league_id}"
+        )
 
-        # Build a map of round_number -> drafted_driver_ids
-        # and a map of round_number -> constructor_id
+        # Only include prospective (not yet completed) rounds — completed rounds are
+        # already accounted for by the exhaustion table.
         drafts_by_round = {}
         constructor_by_round = {}
         for draft in existing_drafts:
             gp = await self.grand_prix_repo.get_grand_prix_by_id(draft.grand_prix_id)
-            if gp and gp.season_id == season_id:
+            if gp and gp.season_id == season_id and not gp.is_completed:
                 drafts_by_round[gp.round_number] = [
                     draft.driver1_id,
                     draft.driver2_id,
@@ -246,50 +256,67 @@ class DraftService:
                     draft.wildcard_id
                 ]
                 constructor_by_round[gp.round_number] = draft.constructor_id
+            else:
+                logger.debug(
+                    f"Skipping draft for gp={draft.grand_prix_id} "
+                    f"(completed, not found, or outside season {season_id})"
+                )
 
         # Add the current draft being validated
         drafts_by_round[current_round] = driver_ids
         constructor_by_round[current_round] = constructor_id
+        logger.debug(
+            f"Prospective draft timeline built | rounds={sorted(drafts_by_round.keys())} "
+            f"(current round {current_round} included)"
+        )
 
-        # Check each driver for consecutive usage
+        # Check each driver for consecutive usage across prospective rounds
         violating_drivers = []
         for driver_id in driver_ids:
             consecutive_count = 0
             max_consecutive = 0
 
-            # Scan through all rounds in order
-            sorted_rounds = sorted(drafts_by_round.keys())
-            for i, round_num in enumerate(sorted_rounds):
+            for round_num in sorted(drafts_by_round.keys()):
                 if driver_id in drafts_by_round[round_num]:
                     consecutive_count += 1
                     max_consecutive = max(max_consecutive, consecutive_count)
                 else:
                     consecutive_count = 0
 
-            # Check if this driver would be used more than 2 consecutive times
+            logger.debug(f"Driver {driver_id} prospective max consecutive: {max_consecutive}")
+
             if max_consecutive > 2:
                 driver = await self.driver_repo.get_driver_by_id(driver_id)
                 if driver:
                     violating_drivers.append(f"{driver.first_name} {driver.last_name}")
+                else:
+                    logger.warning(
+                        f"Driver {driver_id} exceeds consecutive limit but was not found in the driver repository"
+                    )
 
         if violating_drivers:
             error_msg = (
                 f"Cannot draft {', '.join(violating_drivers)} for more than 2 consecutive Grand Prix. "
                 f"You have already drafted them for 2 consecutive races."
             )
+            logger.info(
+                f"Prospective exhaustion violation (drivers) | player={player_id} league={league_id} "
+                f"gp={grand_prix_id} drivers={violating_drivers}"
+            )
             return False, error_msg, violating_drivers
 
-        # Check constructor for consecutive usage
+        # Check constructor for consecutive usage across prospective rounds
         consecutive_count = 0
         max_consecutive = 0
 
-        sorted_rounds = sorted(constructor_by_round.keys())
-        for i, round_num in enumerate(sorted_rounds):
+        for round_num in sorted(constructor_by_round.keys()):
             if constructor_by_round[round_num] == constructor_id:
                 consecutive_count += 1
                 max_consecutive = max(max_consecutive, consecutive_count)
             else:
                 consecutive_count = 0
+
+        logger.debug(f"Constructor {constructor_id} prospective max consecutive: {max_consecutive}")
 
         if max_consecutive > 2:
             constructor = await self.constructor_repo.get_constructor_by_id(constructor_id)
@@ -298,8 +325,15 @@ class DraftService:
                 f"Cannot draft {constructor_name} for more than 2 consecutive Grand Prix. "
                 f"You have already drafted them for 2 consecutive races."
             )
+            logger.info(
+                f"Prospective exhaustion violation (constructor) | player={player_id} league={league_id} "
+                f"gp={grand_prix_id} constructor={constructor_name}"
+            )
             return False, error_msg, [constructor_name]
 
+        logger.debug(
+            f"Prospective exhaustion check passed | player={player_id} league={league_id} gp={grand_prix_id}"
+        )
         return True, None, []
 
     async def validate_counterpicks(
