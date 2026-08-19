@@ -1041,7 +1041,7 @@ class DraftRepository:
         """READ: Get a player's draft for a GP in a specific league"""
         query = """
                 SELECT id, player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id,
-                       wildcard_id, constructor_id, is_auto_assigned, created_at, updated_at
+                       wildcard_id, constructor_id, is_auto_assigned, created_at, updated_at, season_id
                 FROM drafts
                 WHERE player_id = %s AND league_id = %s AND grand_prix_id = %s
                 """
@@ -1052,7 +1052,7 @@ class DraftRepository:
         """READ: Get all drafts for a Grand Prix in a specific league"""
         query = """
                 SELECT id, player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id,
-                       wildcard_id, constructor_id, is_auto_assigned, created_at, updated_at
+                       wildcard_id, constructor_id, is_auto_assigned, created_at, updated_at, season_id
                 FROM drafts
                 WHERE grand_prix_id = %s AND league_id = %s
                 ORDER BY created_at
@@ -1064,7 +1064,7 @@ class DraftRepository:
         """READ: Get all drafts for a player in a specific league"""
         query = """
                 SELECT id, player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id,
-                       wildcard_id, constructor_id, is_auto_assigned, created_at, updated_at
+                       wildcard_id, constructor_id, is_auto_assigned, created_at, updated_at, season_id
                 FROM drafts
                 WHERE player_id = %s AND league_id = %s
                 ORDER BY grand_prix_id
