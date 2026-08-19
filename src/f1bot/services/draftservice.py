@@ -4,7 +4,7 @@ from f1bot.services.models import (
     GrandPrix, Draft, Driver, Constructor, Counterpick, DriverExhaustion,
     DraftRepository, DriverRepository, ConstructorRepository,
     GrandPrixRepository, CounterpickRepository, DriverExhaustionRepository,
-    DatabaseManager, ConstructorExhaustionRepository
+    DatabaseManager, ConstructorExhaustionRepository, LeagueRepository
 )
 from f1bot.utils.logger import BotLogger
 
@@ -29,7 +29,8 @@ class DraftService:
         self.grand_prix_repo = GrandPrixRepository(db_manager)
         self.counterpick_repo = CounterpickRepository(db_manager)
         self.exhaustion_repo = DriverExhaustionRepository(db_manager)
-        self.constructor_exhaustion_repo = ConstructorExhaustionRepository(db_manager)
+        self.constructor_exhaustion_repo = ConstructorExhaustionRepository(db_manager),
+        self.league_repo = LeagueRepository(db_manager)
 
     async def validate_draft_deadline(self, grand_prix_id: int) -> Tuple[bool, Optional[str]]:
         """
@@ -455,6 +456,12 @@ class DraftService:
             Tuple of (Draft object or None, error_message or None)
         """
         try:
+            # Resolve season_id from the league
+            league = await self.league_repo.get_league_by_id(league_id)
+            if not league:
+                return None, "League not found"
+            season_id = league.season_id
+
             if not is_admin_draft:
                 # 1. Check draft deadline
                 is_valid, error = await self.validate_draft_deadline(grand_prix_id)
@@ -522,6 +529,7 @@ class DraftService:
                 driver3_id=driver3_id,
                 wildcard_id=wildcard_id,
                 constructor_id=constructor_id,
+                season_id=season_id,
                 is_auto_assigned=is_auto_assigned
             )
 

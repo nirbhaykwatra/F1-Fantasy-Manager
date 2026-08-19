@@ -95,6 +95,7 @@ class PlayerLeague:
     team_name: Optional[str]
     team_motto: Optional[str]
     joined_at: datetime
+    season_id: int
 
 
 @dataclass
@@ -112,6 +113,7 @@ class Draft:
     is_auto_assigned: bool
     created_at: datetime
     updated_at: datetime
+    season_id: int
 
 @dataclass
 class DriverExhaustion:
@@ -178,6 +180,7 @@ class PlayerRoundScore:
     total_points: int
     breakdown_json: Dict[str, Any]
     calculated_at: datetime
+    season_id: int
 
 
 @dataclass
@@ -871,16 +874,17 @@ class PlayerRepository:
             player_id: int,
             league_id: int,
             team_name: Optional[str],
-            team_motto: Optional[str]
+            team_motto: Optional[str],
+            season_id: int
     ) -> Optional[PlayerLeague]:
         """CREATE: Add a player to a league with league-specific team info"""
         query = """
-                INSERT INTO player_leagues (player_id, league_id, team_name, team_motto)
-                VALUES (%s, %s, %s, %s) ON CONFLICT (player_id, league_id) DO NOTHING
-                RETURNING player_id, league_id, team_name, team_motto, joined_at
+                INSERT INTO player_leagues (player_id, league_id, team_name, team_motto, season_id)
+                VALUES (%s, %s, %s, %s, %s) ON CONFLICT (player_id, league_id) DO NOTHING
+                RETURNING player_id, league_id, team_name, team_motto, joined_at, season_id
                 """
         try:
-            row = await self.db.fetch_one(query, (player_id, league_id, team_name, team_motto))
+            row = await self.db.fetch_one(query, (player_id, league_id, team_name, team_motto, season_id))
             return PlayerLeague(*row) if row else None
         except Exception as e:
             raise ValueError(f"Failed to add player to league: {e}")
@@ -962,7 +966,7 @@ class PlayerRepository:
     async def get_player_league_info(self, player_id: int, league_id: int) -> Optional[PlayerLeague]:
         """READ: Get player's league-specific information"""
         query = """
-                SELECT player_id, league_id, team_name, team_motto, joined_at
+                SELECT player_id, league_id, team_name, team_motto, joined_at, season_id
                 FROM player_leagues
                 WHERE player_id = %s \
                   AND league_id = %s
@@ -1003,13 +1007,14 @@ class DraftRepository:
             driver3_id: int,
             wildcard_id: int,
             constructor_id: int,
-            is_auto_assigned: bool = False
+            season_id: int,
+            is_auto_assigned: bool = False,
     ) -> Optional[Draft]:
         """CREATE: Submit a draft for a specific league (upsert pattern)"""
         query = """
                 INSERT INTO drafts (player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id, wildcard_id,
-                                    constructor_id, is_auto_assigned, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()) 
+                                    constructor_id, is_auto_assigned, updated_at, season_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s) 
                 ON CONFLICT (player_id, league_id, grand_prix_id)
                 DO UPDATE SET
                     driver1_id = EXCLUDED.driver1_id,
@@ -1018,14 +1023,15 @@ class DraftRepository:
                     wildcard_id = EXCLUDED.wildcard_id,
                     constructor_id = EXCLUDED.constructor_id,
                     is_auto_assigned = EXCLUDED.is_auto_assigned,
-                    updated_at = NOW()
+                    updated_at = NOW(),
+                    season_id = EXCLUDED.season_id
                 RETURNING id, player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id, wildcard_id, 
-                          constructor_id, is_auto_assigned, created_at, updated_at
+                          constructor_id, is_auto_assigned, created_at, updated_at, season_id
                 """
         try:
             row = await self.db.fetch_one(query, (
                 player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id,
-                wildcard_id, constructor_id, is_auto_assigned
+                wildcard_id, constructor_id, is_auto_assigned, season_id
             ))
             return Draft(*row) if row else None
         except Exception as e:
@@ -1070,7 +1076,7 @@ class DraftRepository:
         """READ: Get all drafts for a player across all their leagues for a specific GP"""
         query = """
                 SELECT d.id, d.player_id, d.league_id, d.grand_prix_id, d.driver1_id, d.driver2_id, d.driver3_id,
-                       d.wildcard_id, d.constructor_id, d.is_auto_assigned, d.created_at, d.updated_at
+                       d.wildcard_id, d.constructor_id, d.is_auto_assigned, d.created_at, d.updated_at, d.season_id
                 FROM drafts d
                 JOIN player_leagues pl ON pl.league_id = d.league_id AND pl.player_id = d.player_id
                 WHERE d.player_id = %s AND d.grand_prix_id = %s
@@ -1708,18 +1714,20 @@ class PlayerRoundScoreRepository:
             league_id: int,
             grand_prix_id: int,
             total_points: int,
-            breakdown_json: Dict[str, Any]
+            breakdown_json: Dict[str, Any],
+            season_id: int
     ) -> Optional[PlayerRoundScore]:
         """CREATE/UPDATE: Store player's score for a GP in a specific league"""
         query = """
-                INSERT INTO player_round_scores (player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at)
-                VALUES (%s, %s, %s, %s, %s, NOW()) 
+                INSERT INTO player_round_scores (player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at, season_id)
+                VALUES (%s, %s, %s, %s, %s, NOW(), %s) 
                 ON CONFLICT (player_id, league_id, grand_prix_id)
                 DO UPDATE SET
                     total_points = EXCLUDED.total_points,
                     breakdown_json = EXCLUDED.breakdown_json,
-                    calculated_at = NOW()
-                RETURNING id, player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at
+                    calculated_at = NOW(),
+                    season_id = EXCLUDED.season_id
+                RETURNING id, player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at, season_id
                 """
         try:
             import json
@@ -1733,7 +1741,8 @@ class PlayerRoundScoreRepository:
                     grand_prix_id=row[3],
                     total_points=row[4],
                     breakdown_json=row[5] if isinstance(row[5], dict) else json.loads(row[5]),
-                    calculated_at=row[6]
+                    calculated_at=row[6],
+                    season_id=row[7]
                 )
             return None
         except Exception as e:
@@ -1742,7 +1751,7 @@ class PlayerRoundScoreRepository:
     async def get_score(self, player_id: int, league_id: int, grand_prix_id: int) -> Optional[PlayerRoundScore]:
         """READ: Get a player's score for a GP in a specific league"""
         query = """
-                SELECT id, player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at
+                SELECT id, player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at, season_id
                 FROM player_round_scores
                 WHERE player_id = %s AND league_id = %s AND grand_prix_id = %s
                 """
@@ -1756,7 +1765,8 @@ class PlayerRoundScoreRepository:
                 grand_prix_id=row[3],
                 total_points=row[4],
                 breakdown_json=row[5] if isinstance(row[5], dict) else json.loads(row[5]),
-                calculated_at=row[6]
+                calculated_at=row[6],
+                season_id=row[7]
             )
         return None
 
@@ -1764,7 +1774,7 @@ class PlayerRoundScoreRepository:
         """READ: Get all scores for a player in a specific league"""
         query = """
                 SELECT prs.id, prs.player_id, prs.league_id, prs.grand_prix_id, prs.total_points,
-                       prs.breakdown_json, prs.calculated_at
+                       prs.breakdown_json, prs.calculated_at, prs.season_id
                 FROM player_round_scores prs
                 JOIN grands_prix gp ON gp.id = prs.grand_prix_id
                 WHERE prs.player_id = %s AND prs.league_id = %s
@@ -1780,7 +1790,8 @@ class PlayerRoundScoreRepository:
                 grand_prix_id=row[3],
                 total_points=row[4],
                 breakdown_json=row[5] if isinstance(row[5], dict) else json.loads(row[5]),
-                calculated_at=row[6]
+                calculated_at=row[6],
+                season_id=row[7]
             )
             for row in rows
         ]
@@ -1788,7 +1799,7 @@ class PlayerRoundScoreRepository:
     async def list_scores_for_grand_prix_in_league(self, grand_prix_id: int, league_id: int) -> List[PlayerRoundScore]:
         """READ: Get all scores for a Grand Prix in a specific league"""
         query = """
-                SELECT id, player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at
+                SELECT id, player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at, season_id
                 FROM player_round_scores
                 WHERE grand_prix_id = %s AND league_id = %s
                 ORDER BY total_points DESC
@@ -1803,7 +1814,8 @@ class PlayerRoundScoreRepository:
                 grand_prix_id=row[3],
                 total_points=row[4],
                 breakdown_json=row[5] if isinstance(row[5], dict) else json.loads(row[5]),
-                calculated_at=row[6]
+                calculated_at=row[6],
+                season_id=row[7]
             )
             for row in rows
         ]
@@ -1812,7 +1824,7 @@ class PlayerRoundScoreRepository:
         """READ: Get all scores for a player across all their leagues for a specific GP"""
         query = """
                 SELECT prs.id, prs.player_id, prs.league_id, prs.grand_prix_id, prs.total_points,
-                       prs.breakdown_json, prs.calculated_at
+                       prs.breakdown_json, prs.calculated_at, prs.season_id
                 FROM player_round_scores prs
                 JOIN player_leagues pl ON pl.league_id = prs.league_id AND pl.player_id = prs.player_id
                 WHERE prs.player_id = %s AND prs.grand_prix_id = %s
@@ -1828,7 +1840,8 @@ class PlayerRoundScoreRepository:
                 grand_prix_id=row[3],
                 total_points=row[4],
                 breakdown_json=row[5] if isinstance(row[5], dict) else json.loads(row[5]),
-                calculated_at=row[6]
+                calculated_at=row[6],
+                season_id=row[7]
             )
             for row in rows
         ]
