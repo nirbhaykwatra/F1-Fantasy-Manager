@@ -29,7 +29,7 @@ class DraftService:
         self.grand_prix_repo = GrandPrixRepository(db_manager)
         self.counterpick_repo = CounterpickRepository(db_manager)
         self.exhaustion_repo = DriverExhaustionRepository(db_manager)
-        self.constructor_exhaustion_repo = ConstructorExhaustionRepository(db_manager),
+        self.constructor_exhaustion_repo = ConstructorExhaustionRepository(db_manager)
         self.league_repo = LeagueRepository(db_manager)
 
     async def validate_draft_deadline(self, grand_prix_id: int) -> Tuple[bool, Optional[str]]:
