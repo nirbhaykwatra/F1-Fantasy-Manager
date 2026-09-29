@@ -57,19 +57,19 @@ class FantasyUser(commands.Cog):
     async def league_autocomplete(self, interaction: discord.Interaction, current: str) -> List[
         app_commands.Choice[str]]:
         """Autocomplete callback for league choices"""
-        return await self.bot.choiceService.get_league_choices(interaction.guild_id)
+        return await self.bot.choiceService.get_league_choices(interaction.guild_id, current)
 
     async def constructor_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
         """Autocomplete callback for constructor choices"""
-        return await self.bot.choiceService.get_constructor_choices(interaction.guild_id)
+        return await self.bot.choiceService.get_constructor_choices(interaction.guild_id, current)
 
     async def driver_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
         """Autocomplete callback for driver choices"""
-        return await self.bot.choiceService.get_driver_choices(interaction.guild_id)
+        return await self.bot.choiceService.get_driver_choices(interaction.guild_id, current)
 
     async def grand_prix_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
         """Autocomplete callback for grand prix choices"""
-        return await self.bot.choiceService.get_grand_prix_choices(interaction.guild_id)
+        return await self.bot.choiceService.get_grand_prix_choices(interaction.guild_id, current)
 
     @app_commands.command(name='register', description='Register for the league!')
     @app_commands.autocomplete(league=league_autocomplete)

@@ -18,28 +18,44 @@ class ChoiceService:
     def __init__(self, db: DatabaseManager):
         self.db = db
 
-    async def get_league_choices(self, guild_id: int) -> List[app_commands.Choice]:
-        repository = LeagueRepository(self.db)
-        leagues = await repository.get_leagues_by_discord_guild(guild_id)
-        return [app_commands.Choice(name=league.name, value=str(league.id)) for league in leagues]
+    async def get_league_choices(self, guild_id: int, current: str = "") -> List[app_commands.Choice]:
+            repository = LeagueRepository(self.db)
+            leagues = await repository.get_leagues_by_discord_guild(guild_id)
+            return [
+                app_commands.Choice(name=league.name, value=str(league.id))
+                for league in leagues
+                if current.lower() in league.name.lower()
+            ]
 
-    async def get_constructor_choices(self, guild_id: int) -> List[app_commands.Choice]:
+    async def get_constructor_choices(self, guild_id: int, current: str = "") -> List[app_commands.Choice]:
         season = await SeasonRepository(self.db).get_active_season()
         repository = ConstructorRepository(self.db)
         constructors = await repository.list_constructors_by_season(season.id)
-        return [app_commands.Choice(name=constructor.full_name, value=str(constructor.id)) for constructor in constructors]
+        return [
+            app_commands.Choice(name=constructor.full_name, value=str(constructor.id))
+            for constructor in constructors
+            if current.lower() in constructor.full_name.lower()
+        ]
 
-    async def get_driver_choices(self, guild_id: int) -> List[app_commands.Choice]:
+    async def get_driver_choices(self, guild_id: int, current: str = "") -> List[app_commands.Choice]:
         season = await SeasonRepository(self.db).get_active_season()
         repository = DriverRepository(self.db)
         drivers = await repository.list_drivers_by_season(season.id, active_only=True)
-        return [app_commands.Choice(name=str(driver.first_name + ' ' + driver.last_name), value=str(driver.id)) for driver in drivers]
+        return [
+            app_commands.Choice(name=f"{driver.first_name} {driver.last_name}", value=str(driver.id))
+            for driver in drivers
+            if current.lower() in f"{driver.first_name} {driver.last_name}".lower()
+        ]
 
-    async def get_grand_prix_choices(self, guild_id: int) -> List[app_commands.Choice]:
+    async def get_grand_prix_choices(self, guild_id: int, current: str = "") -> List[app_commands.Choice]:
         season = await SeasonRepository(self.db).get_active_season()
         repository = GrandPrixRepository(self.db)
         grands_prix = await repository.list_grands_prix_by_season(season.id)
-        return [app_commands.Choice(name=str(f"Round {grand_prix.round_number} - {grand_prix.event_name}"), value=str(grand_prix.id)) for grand_prix in grands_prix]
+        return [
+            app_commands.Choice(name=f"Round {grand_prix.round_number} - {grand_prix.event_name}", value=str(grand_prix.id))
+            for grand_prix in grands_prix
+            if current.lower() in f"Round {grand_prix.round_number} - {grand_prix.event_name}".lower()
+        ]
 
     async def get_counterpick_choices(self, guild_id: int) -> List[app_commands.Choice]:
         season = await SeasonRepository(self.db).get_active_season()
