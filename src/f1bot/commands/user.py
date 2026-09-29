@@ -2095,24 +2095,24 @@ class FantasyUser(commands.Cog):
                     inline=False
                 )
 
-            if weather_text[1]:
-                overview_embed.add_field(
-                    name="🌡️ **Temperature** 🌡️",
-                    value=weather_text[1],
-                    inline=True
-                )
-            if weather_text[2]:
-                overview_embed.add_field(
-                    name="💧 **Humidity** 💧",
-                    value=weather_text[2],
-                    inline=True
-                )
-            if weather_text[3]:
-                overview_embed.add_field(
-                    name="💨 **Wind Speeds** 💨",
-                    value=weather_text[3],
-                    inline=True
-                )
+                if weather_text[1]:
+                    overview_embed.add_field(
+                        name="🌡️ **Temperature** 🌡️",
+                        value=weather_text[1],
+                        inline=True
+                    )
+                if weather_text[2]:
+                    overview_embed.add_field(
+                        name="💧 **Humidity** 💧",
+                        value=weather_text[2],
+                        inline=True
+                    )
+                if weather_text[3]:
+                    overview_embed.add_field(
+                        name="💨 **Wind Speeds** 💨",
+                        value=weather_text[3],
+                        inline=True
+                    )
 
             # Sessions with results available (overview summary)
             if results_by_session:

@@ -25,6 +25,7 @@ interface Draft {
     driver3_id: number;
     wildcard_id: number;
     constructor_id: number;
+    season_id?: number;
 }
 
 interface RaceResult {
@@ -211,11 +212,19 @@ export class ScoringService {
             if (ownsTransaction) await client.query('BEGIN');
 
             // 1. Get the season ID for this Grand Prix
-            const seasonResult = await client.query(
-                'SELECT season_id FROM grands_prix WHERE id = $1',
-                [grandPrixId]
+            const leagueResult = await client.query(
+                'SELECT season_id FROM leagues WHERE id = $1',
+                [leagueId]
             );
-            const seasonId = seasonResult.rows[0].season_id;
+            let seasonId = leagueResult.rows[0]?.season_id;
+
+            if (!seasonId) {
+                const seasonResult = await client.query(
+                    'SELECT season_id FROM grands_prix WHERE id = $1',
+                    [grandPrixId]
+                );
+                seasonId = seasonResult.rows[0]?.season_id;
+            }
 
             // 2. Fetch scoring rules for this season
             const rules = await this.getScoringRules(seasonId);
@@ -269,8 +278,8 @@ export class ScoringService {
                 // 8. Store the calculated points in player_round_scores table
                 await client.query(
                     `INSERT INTO player_round_scores
-                     (player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at)
-                     VALUES ($1, $2, $3, $4, $5, NOW())
+                     (player_id, league_id, grand_prix_id, total_points, breakdown_json, calculated_at, season_id)
+                     VALUES ($1, $2, $3, $4, $5, NOW(), $6)
                      ON CONFLICT (player_id, league_id, grand_prix_id)
                          DO UPDATE SET
                                        total_points = $4,
@@ -281,7 +290,8 @@ export class ScoringService {
                         draft.league_id,
                         draft.grand_prix_id,
                         breakdown.total,
-                        JSON.stringify(breakdown)
+                        JSON.stringify(breakdown),
+                        seasonId
                     ]
                 );
 
@@ -397,8 +407,8 @@ export class ScoringService {
         // Insert the auto-generated draft
         await client.query(
             `INSERT INTO drafts 
-             (player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id, wildcard_id, constructor_id, is_auto_assigned, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, NOW())`,
+             (player_id, league_id, grand_prix_id, driver1_id, driver2_id, driver3_id, wildcard_id, constructor_id, is_auto_assigned, updated_at, season_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, NOW(), $9)`,
             [
                 playerId,
                 leagueId,
@@ -407,7 +417,8 @@ export class ScoringService {
                 draft.driver2_id,
                 draft.driver3_id,
                 draft.wildcard_id,
-                draft.constructor_id
+                draft.constructor_id,
+                seasonId
             ]
         );
     }
@@ -727,20 +738,20 @@ export class ScoringService {
             draft.wildcard_id
         ];
 
-        // Get the current GP's round number
+        // Get the current GP's round number and season ID
         const gpResult = await client.query(
             'SELECT round_number, season_id FROM grands_prix WHERE id = $1',
             [draft.grand_prix_id]
         );
         const currentRound = gpResult.rows[0].round_number;
-        const seasonId = gpResult.rows[0].season_id;
+        const seasonId = draft.season_id ?? gpResult.rows[0].season_id;
 
         // Find the most recent previous GP (in the same season) that has a draft for this player,
         // skipping over any rounds with no draft (i.e. skipped races)
         const prevDraftResult = await client.query(
             `SELECT d.grand_prix_id, d.driver1_id, d.driver2_id, d.driver3_id, d.wildcard_id
              FROM drafts d
-             JOIN grands_prix gp ON gp.id = d.grand_prix_id
+                      JOIN grands_prix gp ON gp.id = d.grand_prix_id
              WHERE d.player_id = $1
                AND d.league_id = $2
                AND gp.season_id = $3
@@ -823,20 +834,20 @@ export class ScoringService {
     private async updateConstructorExhaustion(draft: Draft, client: any): Promise<void> {
         const constructorId = draft.constructor_id;
 
-        // Get the current GP's round number
+        // Get the current GP's round number and season ID
         const gpResult = await client.query(
             'SELECT round_number, season_id FROM grands_prix WHERE id = $1',
             [draft.grand_prix_id]
         );
         const currentRound = gpResult.rows[0].round_number;
-        const seasonId = gpResult.rows[0].season_id;
+        const seasonId = draft.season_id ?? gpResult.rows[0].season_id;
 
         // Find the most recent previous GP (in the same season) that has a draft for this player,
         // skipping over any rounds with no draft (i.e. skipped races)
         const prevDraftResult = await client.query(
             `SELECT d.grand_prix_id, d.constructor_id
              FROM drafts d
-             JOIN grands_prix gp ON gp.id = d.grand_prix_id
+                      JOIN grands_prix gp ON gp.id = d.grand_prix_id
              WHERE d.player_id = $1
                AND d.league_id = $2
                AND gp.season_id = $3
